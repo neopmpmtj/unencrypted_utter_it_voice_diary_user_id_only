@@ -1,0 +1,47 @@
+{% extends "base_dashboard.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Terms of Service" %} - VoiceDiary{% endblock %}
+{% block page_title %}{% trans "Terms of Service" %}{% endblock %}
+
+{% block dashboard_content %}
+<div class="max-w-2xl mx-auto space-y-8 animate-fade-in">
+  <section>
+    <h2 class="text-lg font-semibold text-foreground mb-2">{% trans "Terms of Service" %}</h2>
+    <p class="text-sm text-muted-foreground">
+      {% trans "By using VoiceDiary, you agree to these terms. We may update them from time to time; continued use constitutes acceptance." %}
+    </p>
+    <p class="text-sm text-muted-foreground mt-2">
+      {% trans "VoiceDiary is provided as-is. Use responsibly and in accordance with applicable laws." %}
+    </p>
+  </section>
+
+  <section>
+    <h2 class="text-lg font-semibold text-foreground mb-2">{% trans "Recommended: Google Account" %}</h2>
+    <p class="text-sm text-muted-foreground">
+      {% trans "VoiceDiary offers significantly more features when used with a Google account, including Google Drive uploads, Calendar sync, and other integrated services. For the best experience, we recommend that you consider signing up or logging in with Google." %}
+    </p>
+  </section>
+
+  <section>
+    <h2 class="text-lg font-semibold text-foreground mb-2">{% trans "Privacy Policy" %}</h2>
+    <p class="text-sm text-muted-foreground">
+      {% trans "We collect and process data necessary to provide the service: account information, diary content, and usage data. Data is stored securely and used only to deliver VoiceDiary features." %}
+    </p>
+    <p class="text-sm text-muted-foreground mt-2">
+      {% trans "We do not sell your personal data to third parties." %}
+    </p>
+  </section>
+
+  <section>
+    <h2 class="text-lg font-semibold text-foreground mb-2">{% trans "Data Retention" %}</h2>
+    <p class="text-sm text-muted-foreground">
+      {% blocktrans with days=retention_days %}When you request account deletion, your account is deactivated immediately. Your data will be retained for {{ days }} days before permanent deletion from our systems. During this period you may cancel the deletion via the link sent to your email. After the retention period, your data is permanently removed and cannot be recovered.{% endblocktrans %}
+    </p>
+  </section>
+
+  <p class="text-xs text-muted-foreground pt-4">
+    {% trans "Last updated: February 2026" %}
+  </p>
+</div>
+{% endblock %}

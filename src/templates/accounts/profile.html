@@ -1,0 +1,352 @@
+{% extends "base_dashboard.html" %}
+{% load static i18n %}
+
+{% block title %}{% trans "Profile" %} - VoiceDiary{% endblock %}
+{% block page_title %}{% trans "Profile" %}{% endblock %}
+
+{% block dashboard_content %}
+<div class="space-y-8 animate-fade-in">
+
+  {# ===== Basic Information ===== #}
+  <section>
+    <h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">{% trans "Basic Information" %}</h2>
+    <div class="vd-card p-6">
+      <form method="post" enctype="multipart/form-data" class="space-y-4">
+        {% csrf_token %}
+        <input type="hidden" name="form_type" value="user_info">
+
+        <div class="space-y-1.5">
+          <label class="block text-sm font-medium text-foreground">{% trans "Email" %}</label>
+          <input type="email" value="{{ user.email }}" disabled class="vd-input opacity-60">
+          {% if user.is_email_verified %}
+          <p class="text-xs text-accent">{% trans "Verified" %}</p>
+          {% else %}
+          <p class="text-xs text-destructive">{% trans "Not verified" %}</p>
+          {% endif %}
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div class="space-y-1.5">
+            <label for="id_first_name" class="block text-sm font-medium text-foreground">{% trans "First name" %}</label>
+            <input type="text" id="id_first_name" name="first_name"
+                   value="{{ user_info_form.first_name.value|default:'' }}"
+                   class="vd-input {% if user_info_form.first_name.errors %}border-destructive{% endif %}">
+            {% for e in user_info_form.first_name.errors %}<p class="text-xs text-destructive">{{ e }}</p>{% endfor %}
+          </div>
+          <div class="space-y-1.5">
+            <label for="id_last_name" class="block text-sm font-medium text-foreground">{% trans "Last name" %}</label>
+            <input type="text" id="id_last_name" name="last_name"
+                   value="{{ user_info_form.last_name.value|default:'' }}"
+                   class="vd-input {% if user_info_form.last_name.errors %}border-destructive{% endif %}">
+            {% for e in user_info_form.last_name.errors %}<p class="text-xs text-destructive">{{ e }}</p>{% endfor %}
+          </div>
+        </div>
+
+        <div class="space-y-1.5">
+          <label for="id_profile_picture" class="block text-sm font-medium text-foreground">{% trans "Profile picture" %}</label>
+          {% if user.profile_picture %}
+          <div class="flex items-center gap-3 mb-2">
+            <img src="{{ user.profile_picture.url }}" alt="" class="h-12 w-12 rounded-full object-cover border border-border">
+          </div>
+          {% endif %}
+          <input type="file" id="id_profile_picture" name="profile_picture" accept="image/*"
+                 class="block w-full text-sm text-muted-foreground file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-secondary file:text-secondary-foreground hover:file:bg-secondary/80">
+        </div>
+
+        <button type="submit" class="vd-btn vd-btn-accent px-4 py-2 text-sm">{% trans "Save" %}</button>
+      </form>
+    </div>
+  </section>
+
+  {# ===== About You ===== #}
+  <section>
+    <h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">{% trans "About You" %}</h2>
+    <div class="vd-card p-6">
+      <form method="post" class="space-y-4">
+        {% csrf_token %}
+        <input type="hidden" name="form_type" value="user_profile">
+
+        <div class="space-y-1.5">
+          <label for="id_bio" class="block text-sm font-medium text-foreground">{% trans "Bio" %}</label>
+          <textarea id="id_bio" name="bio" rows="3" maxlength="500"
+                    class="vd-textarea text-sm">{{ user_profile_form.bio.value|default:'' }}</textarea>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="space-y-1.5">
+            <label for="id_location" class="block text-sm font-medium text-foreground">{% trans "Location" %}</label>
+            <input type="text" id="id_location" name="location" value="{{ user_profile_form.location.value|default:'' }}" class="vd-input">
+          </div>
+          <div class="space-y-1.5">
+            <label for="id_phone_number" class="block text-sm font-medium text-foreground">{% trans "Phone" %}</label>
+            <input type="text" id="id_phone_number" name="phone_number" value="{{ user_profile_form.phone_number.value|default:'' }}" class="vd-input">
+          </div>
+        </div>
+
+        <div class="space-y-1.5">
+          <label for="id_website" class="block text-sm font-medium text-foreground">{% trans "Website" %}</label>
+          <input type="url" id="id_website" name="website" value="{{ user_profile_form.website.value|default:'' }}"
+                 class="vd-input" placeholder="https://">
+        </div>
+
+        <button type="submit" class="vd-btn vd-btn-accent px-4 py-2 text-sm">{% trans "Save" %}</button>
+      </form>
+    </div>
+  </section>
+
+  {# ===== Voice Diary Settings ===== #}
+  <section id="voice-diary">
+    <h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">{% trans "VoiceDiary Settings" %}</h2>
+    <div class="vd-card p-6">
+      <form method="post" class="space-y-4">
+        {% csrf_token %}
+        <input type="hidden" name="form_type" value="user_preferences">
+
+        <div class="space-y-1.5">
+          <label for="id_preferred_language" class="block text-sm font-medium text-foreground">{% trans "Preferred language" %}</label>
+          {{ user_preferences_form.preferred_language }}
+        </div>
+
+        <div class="space-y-1.5">
+          <label for="id_timezone" class="block text-sm font-medium text-foreground">{% trans "Timezone" %}</label>
+          {{ user_preferences_form.timezone }}
+          <p class="text-xs text-muted-foreground">{% trans "Used for calendar event scheduling." %}</p>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <label class="inline-flex items-center gap-2 cursor-pointer select-none" for="id_enable_translation">
+            <span class="relative">
+              <input type="checkbox" id="id_enable_translation" name="enable_translation"
+                     {% if user_preferences_form.enable_translation.value %}checked{% endif %}
+                     class="sr-only peer">
+              <span class="block w-9 h-5 rounded-full transition-colors duration-200 bg-muted peer-checked:bg-accent"></span>
+              <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 peer-checked:translate-x-4"></span>
+            </span>
+            <span class="text-sm text-foreground">{% trans "Translate diary content" %}</span>
+          </label>
+        </div>
+
+        <div class="space-y-1.5">
+          <label for="id_drive_attachment_folder_name" class="block text-sm font-medium text-foreground">{% trans "Drive folder path" %}</label>
+          <input type="text" id="id_drive_attachment_folder_name" name="drive_attachment_folder_name"
+                 value="{{ user_preferences_form.drive_attachment_folder_name.value|default:'' }}" class="vd-input">
+        </div>
+
+        <div class="space-y-1.5">
+          <p class="text-sm font-medium text-foreground">{% trans "Accent color" %}</p>
+          <p class="text-xs text-muted-foreground">{% trans "Color for buttons and highlights" %}</p>
+          <div class="flex flex-wrap gap-2" role="group" aria-label="{% trans 'Accent color' %}">
+            {% with current_accent=accent_theme|default:'green' %}
+            <button type="button" data-accent-swatch="green"
+                    class="w-9 h-9 rounded-full border-2 border-transparent shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:ring-foreground {% if current_accent == 'green' %}ring-2 ring-offset-2 ring-offset-background ring-foreground border-foreground/20{% endif %}"
+                    aria-label="{% trans 'Green accent' %}"
+                    {% if current_accent == 'green' %}aria-current="true"{% endif %}
+                    onclick="VDTheme.selectAccent('green'); var s=document.querySelectorAll('[data-accent-swatch]'); s.forEach(function(b){ b.removeAttribute('aria-current'); b.classList.remove('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20'); }); this.setAttribute('aria-current','true'); this.classList.add('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20');"><span class="sr-only">{% trans "Select" %}</span></button>
+            <button type="button" data-accent-swatch="blue"
+                    class="w-9 h-9 rounded-full border-2 border-transparent shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:ring-foreground {% if current_accent == 'blue' %}ring-2 ring-offset-2 ring-offset-background ring-foreground border-foreground/20{% endif %}"
+                    aria-label="{% trans 'Blue accent' %}"
+                    {% if current_accent == 'blue' %}aria-current="true"{% endif %}
+                    onclick="VDTheme.selectAccent('blue'); var s=document.querySelectorAll('[data-accent-swatch]'); s.forEach(function(b){ b.removeAttribute('aria-current'); b.classList.remove('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20'); }); this.setAttribute('aria-current','true'); this.classList.add('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20');"><span class="sr-only">{% trans "Select" %}</span></button>
+            <button type="button" data-accent-swatch="indigo"
+                    class="w-9 h-9 rounded-full border-2 border-transparent shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:ring-foreground {% if current_accent == 'indigo' %}ring-2 ring-offset-2 ring-offset-background ring-foreground border-foreground/20{% endif %}"
+                    aria-label="{% trans 'Indigo accent' %}"
+                    {% if current_accent == 'indigo' %}aria-current="true"{% endif %}
+                    onclick="VDTheme.selectAccent('indigo'); var s=document.querySelectorAll('[data-accent-swatch]'); s.forEach(function(b){ b.removeAttribute('aria-current'); b.classList.remove('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20'); }); this.setAttribute('aria-current','true'); this.classList.add('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20');"><span class="sr-only">{% trans "Select" %}</span></button>
+            <button type="button" data-accent-swatch="purple"
+                    class="w-9 h-9 rounded-full border-2 border-transparent shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:ring-foreground {% if current_accent == 'purple' %}ring-2 ring-offset-2 ring-offset-background ring-foreground border-foreground/20{% endif %}"
+                    aria-label="{% trans 'Purple accent' %}"
+                    {% if current_accent == 'purple' %}aria-current="true"{% endif %}
+                    onclick="VDTheme.selectAccent('purple'); var s=document.querySelectorAll('[data-accent-swatch]'); s.forEach(function(b){ b.removeAttribute('aria-current'); b.classList.remove('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20'); }); this.setAttribute('aria-current','true'); this.classList.add('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20');"><span class="sr-only">{% trans "Select" %}</span></button>
+            <button type="button" data-accent-swatch="red"
+                    class="w-9 h-9 rounded-full border-2 border-transparent shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:ring-foreground {% if current_accent == 'red' %}ring-2 ring-offset-2 ring-offset-background ring-foreground border-foreground/20{% endif %}"
+                    aria-label="{% trans 'Red accent' %}"
+                    {% if current_accent == 'red' %}aria-current="true"{% endif %}
+                    onclick="VDTheme.selectAccent('red'); var s=document.querySelectorAll('[data-accent-swatch]'); s.forEach(function(b){ b.removeAttribute('aria-current'); b.classList.remove('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20'); }); this.setAttribute('aria-current','true'); this.classList.add('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20');"><span class="sr-only">{% trans "Select" %}</span></button>
+            <button type="button" data-accent-swatch="orange"
+                    class="w-9 h-9 rounded-full border-2 border-transparent shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:ring-foreground {% if current_accent == 'orange' %}ring-2 ring-offset-2 ring-offset-background ring-foreground border-foreground/20{% endif %}"
+                    aria-label="{% trans 'Orange accent' %}"
+                    {% if current_accent == 'orange' %}aria-current="true"{% endif %}
+                    onclick="VDTheme.selectAccent('orange'); var s=document.querySelectorAll('[data-accent-swatch]'); s.forEach(function(b){ b.removeAttribute('aria-current'); b.classList.remove('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20'); }); this.setAttribute('aria-current','true'); this.classList.add('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20');"><span class="sr-only">{% trans "Select" %}</span></button>
+            <button type="button" data-accent-swatch="yellow"
+                    class="w-9 h-9 rounded-full border-2 border-transparent shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:ring-foreground {% if current_accent == 'yellow' %}ring-2 ring-offset-2 ring-offset-background ring-foreground border-foreground/20{% endif %}"
+                    aria-label="{% trans 'Yellow accent' %}"
+                    {% if current_accent == 'yellow' %}aria-current="true"{% endif %}
+                    onclick="VDTheme.selectAccent('yellow'); var s=document.querySelectorAll('[data-accent-swatch]'); s.forEach(function(b){ b.removeAttribute('aria-current'); b.classList.remove('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20'); }); this.setAttribute('aria-current','true'); this.classList.add('ring-2','ring-offset-2','ring-offset-background','ring-foreground','border-foreground/20');"><span class="sr-only">{% trans "Select" %}</span></button>
+            {% endwith %}
+          </div>
+        </div>
+
+        <div class="space-y-1.5">
+          <p class="text-sm font-medium text-foreground">{% trans "Transcription text size" %}</p>
+          <p class="text-xs text-muted-foreground">{% trans "Font size for diary entries and transcriptions" %}</p>
+          <div class="flex flex-wrap gap-2" role="group" aria-label="{% trans 'Text size' %}">
+            {% with current_size=transcription_text_size|default:'small' %}
+            <button type="button" data-transcription-size="small"
+                    class="vd-btn px-3 py-1.5 text-xs {% if current_size == 'small' %}vd-btn-accent{% else %}vd-btn-ghost border border-input{% endif %}"
+                    aria-label="{% trans 'Small text' %}"
+                    {% if current_size == 'small' %}aria-current="true"{% endif %}
+                    onclick="VDTheme.selectTranscriptionSize('small'); var s=document.querySelectorAll('[data-transcription-size]'); s.forEach(function(b){ b.removeAttribute('aria-current'); b.classList.remove('vd-btn-accent'); b.classList.add('vd-btn-ghost','border','border-input'); }); this.setAttribute('aria-current','true'); this.classList.remove('vd-btn-ghost','border','border-input'); this.classList.add('vd-btn-accent');">{% trans "Small" %}</button>
+            <button type="button" data-transcription-size="medium"
+                    class="vd-btn px-3 py-1.5 text-xs {% if current_size == 'medium' %}vd-btn-accent{% else %}vd-btn-ghost border border-input{% endif %}"
+                    aria-label="{% trans 'Medium text' %}"
+                    {% if current_size == 'medium' %}aria-current="true"{% endif %}
+                    onclick="VDTheme.selectTranscriptionSize('medium'); var s=document.querySelectorAll('[data-transcription-size]'); s.forEach(function(b){ b.removeAttribute('aria-current'); b.classList.remove('vd-btn-accent'); b.classList.add('vd-btn-ghost','border','border-input'); }); this.setAttribute('aria-current','true'); this.classList.remove('vd-btn-ghost','border','border-input'); this.classList.add('vd-btn-accent');">{% trans "Medium" %}</button>
+            <button type="button" data-transcription-size="large"
+                    class="vd-btn px-3 py-1.5 text-xs {% if current_size == 'large' %}vd-btn-accent{% else %}vd-btn-ghost border border-input{% endif %}"
+                    aria-label="{% trans 'Large text' %}"
+                    {% if current_size == 'large' %}aria-current="true"{% endif %}
+                    onclick="VDTheme.selectTranscriptionSize('large'); var s=document.querySelectorAll('[data-transcription-size]'); s.forEach(function(b){ b.removeAttribute('aria-current'); b.classList.remove('vd-btn-accent'); b.classList.add('vd-btn-ghost','border','border-input'); }); this.setAttribute('aria-current','true'); this.classList.remove('vd-btn-ghost','border','border-input'); this.classList.add('vd-btn-accent');">{% trans "Large" %}</button>
+            {% endwith %}
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <label class="inline-flex items-center gap-2 cursor-pointer select-none" for="id_standalone_app_ui">
+            <span class="relative">
+              <input type="checkbox" id="id_standalone_app_ui" name="standalone_app_ui"
+                     {% if user_preferences_form.standalone_app_ui.value %}checked{% endif %}
+                     class="sr-only peer">
+              <span class="block w-9 h-5 rounded-full transition-colors duration-200 bg-muted peer-checked:bg-accent"></span>
+              <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 peer-checked:translate-x-4"></span>
+            </span>
+            <span class="text-sm text-foreground">{% trans "App-like mode (hide browser address bar)" %}</span>
+          </label>
+          <p class="text-xs text-muted-foreground">{% trans "When using Add to Home Screen. Refresh the page after saving to apply; if already installed, remove and re-add the app." %}</p>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <label class="inline-flex items-center gap-2 cursor-pointer select-none" for="id_show_recording_timer">
+            <span class="relative">
+              <input type="checkbox" id="id_show_recording_timer" name="show_recording_timer"
+                     {% if user_preferences_form.show_recording_timer.value %}checked{% endif %}
+                     class="sr-only peer">
+              <span class="block w-9 h-5 rounded-full transition-colors duration-200 bg-muted peer-checked:bg-accent"></span>
+              <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 peer-checked:translate-x-4"></span>
+            </span>
+            <span class="text-sm text-foreground">{% trans "Show recording timer" %}</span>
+          </label>
+          <p class="text-xs text-muted-foreground">{% trans "Display elapsed recording time below the record button" %}</p>
+        </div>
+
+        <button type="submit" name="save_preferences" value="1" class="vd-btn vd-btn-accent px-4 py-2 text-sm">{% trans "Save" %}</button>
+      </form>
+      <script>
+      (function() {
+        var themeUrl = '{% url "accounts:update_theme" %}';
+        function getCsrfToken() {
+          var m = document.cookie.match(/csrftoken=([^;]+)/);
+          if (m) return m[1];
+          var inp = document.querySelector('input[name="csrfmiddlewaretoken"]');
+          return inp ? inp.value : '';
+        }
+        function savePref(key, value) {
+          var csrf = getCsrfToken();
+          if (!csrf) return;
+          var payload = {};
+          payload[key] = value;
+          fetch(themeUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+            body: JSON.stringify(payload)
+          }).catch(function() {});
+        }
+        var el;
+        el = document.getElementById('id_standalone_app_ui');
+        if (el) el.addEventListener('change', function() { savePref('standalone_app_ui', this.checked); });
+        el = document.getElementById('id_show_recording_timer');
+        if (el) el.addEventListener('change', function() { savePref('show_recording_timer', this.checked); });
+      })();
+      </script>
+    </div>
+  </section>
+
+  {# ===== Interface Language ===== #}
+  <section>
+    <h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">{% trans "Interface Language" %}</h2>
+    <div class="vd-card p-6">
+      <form action="{% url 'accounts:set_interface_language' %}" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <div class="flex items-center gap-3">
+          <select name="language" class="vd-input w-auto" onchange="this.form.submit()">
+            {% get_current_language as CURRENT_LANGUAGE %}
+            {% get_available_languages as LANGUAGES %}
+            {% for lang_code, lang_name in LANGUAGES %}
+            <option value="{{ lang_code }}" {% if lang_code == CURRENT_LANGUAGE %}selected{% endif %}>{{ lang_name }}</option>
+            {% endfor %}
+          </select>
+          <p class="text-xs text-muted-foreground">{% trans "Changes the interface language" %}</p>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  {# ===== Google Account ===== #}
+  <section>
+    <h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">{% trans "Connected Accounts" %}</h2>
+    <div class="vd-card p-6">
+      {% if has_google %}
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <svg class="h-5 w-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          <span class="text-sm text-foreground">{% trans "Google connected" %}</span>
+        </div>
+        <a href="{% url 'accounts:google_disconnect' %}" class="text-sm text-destructive hover:underline">{% trans "Disconnect" %}</a>
+      </div>
+      {% else %}
+      <a href="{% url 'accounts:google_connect' %}" class="vd-btn vd-btn-ghost text-sm border border-input gap-2 px-4 py-2">
+        <svg class="h-4 w-4" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        {% trans "Connect Google" %}
+      </a>
+      {% endif %}
+    </div>
+  </section>
+
+  {# ===== Security ===== #}
+  <section>
+    <h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">{% trans "Security" %}</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {% if can_change_password %}
+      <a href="{% url 'accounts:password_change' %}" class="vd-card p-4 flex items-center gap-3 hover:border-accent/50 transition-colors">
+        <div class="flex items-center justify-center h-10 w-10 rounded-lg bg-secondary text-muted-foreground">
+          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
+          </svg>
+        </div>
+        <div>
+          <p class="text-sm font-medium text-foreground">{% trans "Change Password" %}</p>
+        </div>
+      </a>
+      {% else %}
+      <div class="vd-card p-4 flex items-center gap-3 opacity-60 cursor-not-allowed pointer-events-none">
+        <div class="flex items-center justify-center h-10 w-10 rounded-lg bg-secondary text-muted-foreground">
+          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
+          </svg>
+        </div>
+        <div>
+          <p class="text-sm font-medium text-foreground">{% trans "Change Password" %}</p>
+          <p class="text-xs text-muted-foreground">{% trans "You sign in with Google; no password to change." %}</p>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  {# ===== Delete Account ===== #}
+  <section>
+    <h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">{% trans "Delete Account" %}</h2>
+    <div class="vd-card p-6 border-destructive/20">
+      {% if user.deletion_requested_at %}
+      <p class="text-sm text-muted-foreground">{% trans "Deletion scheduled. Check your email to cancel." %}</p>
+      {% else %}
+      <p class="text-sm text-muted-foreground mb-3">{% trans "Permanently delete your account and all associated data." %}</p>
+      <a href="{% url 'accounts:account_delete' %}" class="vd-btn vd-btn-ghost text-destructive hover:bg-destructive/10 border border-destructive/30 px-4 py-2 text-sm">
+        {% trans "Delete Account" %}
+      </a>
+      {% endif %}
+    </div>
+  </section>
+
+</div>
+{% endblock %}

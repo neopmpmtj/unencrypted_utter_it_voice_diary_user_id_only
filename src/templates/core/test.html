@@ -1,0 +1,132 @@
+{% extends "base_dashboard.html" %}
+{% load static i18n %}
+
+{% block title %}Admin Test Page{% endblock %}
+{% block page_title %}Admin Test Page{% endblock %}
+
+{% block dashboard_content %}
+<div class="space-y-6 animate-fade-in">
+
+  <section class="vd-card p-6 space-y-4">
+    <h2 class="text-sm font-semibold text-foreground">Invoice PDF Parser</h2>
+    <p class="text-xs text-muted-foreground">
+      Searches Gmail for invoice emails, downloads PDF attachments, and extracts structured data via OpenAI.
+    </p>
+
+    <div class="flex items-center gap-3">
+      <button type="button"
+              id="parseInvoicesBtn"
+              class="vd-btn vd-btn-accent px-5 py-2.5 text-sm">
+        Parse Invoices
+      </button>
+      <div id="parseSpinner" class="hidden flex items-center gap-2 text-sm text-muted-foreground">
+        <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        <span>Processing invoices...</span>
+      </div>
+    </div>
+
+    <div id="parseError" class="hidden rounded-lg bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive"></div>
+
+    <div id="parseSummary" class="hidden rounded-lg bg-accent/5 border border-accent/30 px-4 py-3 text-sm text-foreground"></div>
+
+    <div id="parseResultWrap" class="hidden space-y-2">
+      <div class="flex items-center justify-between">
+        <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider">JSON Response</h3>
+        <button type="button"
+                id="copyJsonBtn"
+                class="vd-btn vd-btn-ghost px-2 py-1 text-xs">
+          Copy
+        </button>
+      </div>
+      <pre id="parseResult"
+           class="rounded-lg bg-muted/50 border border-border p-4 text-xs text-foreground overflow-x-auto max-h-[60vh] overflow-y-auto font-mono whitespace-pre-wrap"></pre>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function() {
+  var btn = document.getElementById('parseInvoicesBtn');
+  var spinner = document.getElementById('parseSpinner');
+  var errorEl = document.getElementById('parseError');
+  var summaryEl = document.getElementById('parseSummary');
+  var resultWrap = document.getElementById('parseResultWrap');
+  var resultEl = document.getElementById('parseResult');
+  var copyBtn = document.getElementById('copyJsonBtn');
+
+  function getCookie(name) {
+    var match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return match ? decodeURIComponent(match[2]) : null;
+  }
+
+  function reset() {
+    errorEl.classList.add('hidden');
+    errorEl.textContent = '';
+    summaryEl.classList.add('hidden');
+    summaryEl.textContent = '';
+    resultWrap.classList.add('hidden');
+    resultEl.textContent = '';
+  }
+
+  btn.addEventListener('click', function() {
+    reset();
+    btn.disabled = true;
+    btn.classList.add('opacity-50');
+    spinner.classList.remove('hidden');
+
+    fetch('{% url "invoice_parser:parse_pdf" %}', {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': getCookie('csrftoken'),
+        'Accept': 'application/json',
+      },
+    })
+    .then(function(resp) {
+      if (!resp.ok) {
+        return resp.json().then(function(body) {
+          throw new Error(body.message || body.error || ('HTTP ' + resp.status));
+        });
+      }
+      return resp.json();
+    })
+    .then(function(data) {
+      var s = data.summary || {};
+      summaryEl.textContent = 'Messages found: ' + (s.messages_found || 0) +
+        '  |  PDFs parsed: ' + (s.pdfs_parsed || 0);
+      summaryEl.classList.remove('hidden');
+
+      if (data.errors && data.errors.length > 0) {
+        errorEl.textContent = data.errors.join('\n');
+        errorEl.classList.remove('hidden');
+      }
+
+      resultEl.textContent = JSON.stringify(data, null, 2);
+      resultWrap.classList.remove('hidden');
+    })
+    .catch(function(err) {
+      errorEl.textContent = err.message || 'Request failed';
+      errorEl.classList.remove('hidden');
+    })
+    .finally(function() {
+      btn.disabled = false;
+      btn.classList.remove('opacity-50');
+      spinner.classList.add('hidden');
+    });
+  });
+
+  copyBtn.addEventListener('click', function() {
+    var text = resultEl.textContent;
+    if (text) {
+      navigator.clipboard.writeText(text).then(function() {
+        copyBtn.textContent = 'Copied';
+        setTimeout(function() { copyBtn.textContent = 'Copy'; }, 1500);
+      });
+    }
+  });
+})();
+</script>
+{% endblock %}

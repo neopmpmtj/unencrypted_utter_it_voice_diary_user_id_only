@@ -1,0 +1,433 @@
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+/* ============================================================
+   VoiceDiary Design System
+   - Light / Dark base modes
+   - 7 selectable accent themes
+   - All colors via HSL CSS variables
+   ============================================================ */
+
+@layer base {
+  /* ----------------------------------------------------------
+     Light mode (default)
+     ---------------------------------------------------------- */
+  :root {
+    --background: 0 0% 98%;
+    --foreground: 0 0% 9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 9%;
+
+    --primary: 0 0% 12%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 0 0% 95%;
+    --secondary-foreground: 0 0% 12%;
+
+    --muted: 0 0% 95%;
+    --muted-foreground: 0 0% 45%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 0 0% 90%;
+    --input: 0 0% 90%;
+    --ring: var(--accent);
+
+    --radius: 0.625rem;
+
+    /* Default accent: green */
+    --accent: 142 71% 45%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Neutral glow (theme-aware) */
+    --glow-subtle: 0 0 6px 1px hsl(var(--muted-foreground) / 0.06);
+  }
+
+  /* ----------------------------------------------------------
+     Dark mode
+     ---------------------------------------------------------- */
+  .dark {
+    --background: 0 0% 5%;
+    --foreground: 0 0% 95%;
+
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 0 0% 8%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 0 0% 95%;
+    --primary-foreground: 0 0% 9%;
+
+    --secondary: 0 0% 14%;
+    --secondary-foreground: 0 0% 95%;
+
+    --muted: 0 0% 14%;
+    --muted-foreground: 0 0% 55%;
+
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 0 0% 18%;
+    --input: 0 0% 18%;
+
+    /* Slightly stronger glow in dark mode */
+    --glow-subtle: 0 0 6px 1px hsl(var(--muted-foreground) / 0.08);
+  }
+
+  /* ----------------------------------------------------------
+     Accent Themes (apply to both light & dark)
+     ---------------------------------------------------------- */
+
+  /* Green (default -- defined in :root above) */
+  .theme-green {
+    --accent: 142 71% 45%;
+    --accent-foreground: 0 0% 100%;
+  }
+
+  .theme-blue {
+    --accent: 217 91% 60%;
+    --accent-foreground: 0 0% 100%;
+  }
+
+  .theme-indigo {
+    --accent: 239 84% 67%;
+    --accent-foreground: 0 0% 100%;
+  }
+
+  .theme-purple {
+    --accent: 270 67% 60%;
+    --accent-foreground: 0 0% 100%;
+  }
+
+  .theme-red {
+    --accent: 0 72% 55%;
+    --accent-foreground: 0 0% 100%;
+  }
+
+  .theme-orange {
+    --accent: 25 95% 53%;
+    --accent-foreground: 0 0% 100%;
+  }
+
+  .theme-yellow {
+    --accent: 48 96% 53%;
+    --accent-foreground: 0 0% 9%;
+  }
+
+  /* ----------------------------------------------------------
+     Dark-mode accent adjustments (slightly brighter)
+     ---------------------------------------------------------- */
+  .dark.theme-green,
+  .dark .theme-green {
+    --accent: 142 69% 50%;
+  }
+
+  .dark.theme-blue,
+  .dark .theme-blue {
+    --accent: 217 91% 65%;
+  }
+
+  .dark.theme-indigo,
+  .dark .theme-indigo {
+    --accent: 239 84% 72%;
+  }
+
+  .dark.theme-purple,
+  .dark .theme-purple {
+    --accent: 270 67% 68%;
+  }
+
+  .dark.theme-red,
+  .dark .theme-red {
+    --accent: 0 72% 60%;
+  }
+
+  .dark.theme-orange,
+  .dark .theme-orange {
+    --accent: 25 95% 58%;
+  }
+
+  .dark.theme-yellow,
+  .dark .theme-yellow {
+    --accent: 48 96% 58%;
+  }
+
+  /* ----------------------------------------------------------
+     Base element resets
+     ---------------------------------------------------------- */
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* ============================================================
+   Component utilities (reusable via @apply or class)
+   ============================================================ */
+
+@layer components {
+  /* Toggle switch */
+  .vd-switch {
+    @apply relative inline-flex h-6 w-11 shrink-0 cursor-pointer
+           rounded-full border-2 border-transparent
+           transition-colors duration-200 ease-in-out
+           focus-visible:outline-none focus-visible:ring-2
+           focus-visible:ring-ring focus-visible:ring-offset-2
+           focus-visible:ring-offset-background;
+  }
+
+  .vd-switch[aria-checked="false"] {
+    @apply bg-muted;
+  }
+
+  .vd-switch[aria-checked="true"] {
+    background-color: hsl(var(--accent));
+  }
+
+  .vd-switch-thumb {
+    @apply pointer-events-none inline-block h-5 w-5
+           rounded-full bg-white shadow-lg ring-0
+           transition-transform duration-200 ease-in-out;
+  }
+
+  .vd-switch[aria-checked="false"] .vd-switch-thumb {
+    @apply translate-x-0;
+  }
+
+  .vd-switch[aria-checked="true"] .vd-switch-thumb {
+    @apply translate-x-5;
+  }
+
+  /* Spinner */
+  .vd-spinner {
+    @apply animate-spin-slow rounded-full border-2
+           border-muted;
+    border-top-color: hsl(var(--accent));
+  }
+
+  .vd-spinner--red {
+    border-top-color: hsl(var(--destructive));
+  }
+
+  .vd-spinner--green {
+    border-top-color: hsl(142 71% 45%);
+  }
+
+  /* Toast */
+  .vd-toast {
+    @apply animate-toast-in rounded-lg px-4 py-3
+           shadow-lg border text-sm font-medium;
+  }
+
+  .vd-toast-success {
+    @apply bg-card text-foreground border-border;
+  }
+
+  .vd-toast-error {
+    @apply bg-destructive text-destructive-foreground border-destructive;
+  }
+
+  /* Card */
+  .vd-card {
+    @apply rounded-lg bg-card text-card-foreground;
+    border: 1px solid hsl(var(--accent));
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.06), var(--glow-subtle);
+  }
+
+  /* Input / Textarea base */
+  .vd-input {
+    @apply flex w-full rounded-md border border-input
+           bg-background px-3 py-2 text-sm text-foreground
+           placeholder:text-muted-foreground
+           focus-visible:outline-none focus-visible:ring-2
+           focus-visible:ring-accent focus-visible:ring-offset-1
+           focus-visible:ring-offset-background
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .vd-textarea {
+    @apply flex w-full rounded-md border bg-background px-3 py-3
+           text-base leading-relaxed text-foreground placeholder:text-muted-foreground
+           focus-visible:outline-none focus-visible:ring-2
+           focus-visible:ring-accent focus-visible:ring-offset-1
+           focus-visible:ring-offset-background
+           disabled:cursor-not-allowed disabled:opacity-50 resize-y;
+    border-color: hsl(var(--accent));
+    box-shadow: var(--glow-subtle);
+  }
+
+  /* Button variants */
+  .vd-btn {
+    @apply inline-flex items-center justify-center
+           rounded-md text-sm font-medium
+           transition-colors duration-150
+           focus-visible:outline-none focus-visible:ring-2
+           focus-visible:ring-ring focus-visible:ring-offset-2
+           focus-visible:ring-offset-background
+           disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .vd-btn-accent {
+    background-color: hsl(var(--accent));
+    color: hsl(var(--accent-foreground));
+    border: 1px solid hsl(var(--accent));
+    box-shadow: var(--glow-subtle);
+  }
+
+  .vd-btn-accent:hover {
+    background-color: hsl(var(--accent) / 0.9);
+  }
+
+  .vd-btn-secondary {
+    @apply bg-secondary text-secondary-foreground;
+  }
+
+  .vd-btn-secondary:hover {
+    @apply bg-secondary/80;
+  }
+
+  .vd-btn-ghost {
+    @apply bg-transparent text-foreground;
+  }
+
+  .vd-btn-ghost:hover {
+    @apply bg-secondary;
+  }
+
+  .vd-btn-destructive {
+    @apply bg-destructive text-destructive-foreground;
+  }
+
+  .vd-btn-destructive:hover {
+    @apply bg-destructive/90;
+  }
+
+  /* Record button (large round) - always red, independent of accent/theme */
+  .vd-record-btn {
+    @apply flex items-center justify-center
+           rounded-full border-0 cursor-pointer
+           transition-all duration-200 ease-in-out
+           focus-visible:outline-none focus-visible:ring-2
+           focus-visible:ring-ring focus-visible:ring-offset-2
+           focus-visible:ring-offset-background
+           disabled:opacity-50 disabled:cursor-not-allowed;
+    width: 72px;
+    height: 72px;
+    background-color: hsl(0, 90%, 50%);
+    color: hsl(0, 0%, 100%);
+  }
+
+  .vd-record-btn:hover:not(:disabled) {
+    transform: scale(1.05);
+  }
+
+  .vd-record-btn.recording {
+    animation: pulse-record 1.5s ease-in-out infinite;
+  }
+
+  .vd-record-btn.paused {
+    background-color: hsl(0, 85%, 48%);
+  }
+
+  /* Small round record button for edit contexts (inline with grammar/rewrite) */
+  .vd-record-btn--sm {
+    width: 48px;
+    height: 48px;
+  }
+
+  .vd-record-btn--sm svg {
+    @apply h-5 w-5;
+  }
+
+  /* Edit modal record button: red by default, pulse when recording */
+  #edit-entry-modal #edit-modal-record-btn {
+    background-color: hsl(0, 90%, 50%);
+    color: hsl(0, 0%, 100%);
+    border-color: hsl(0, 90%, 50%);
+  }
+
+  /* Edit-mode recording indicator (prominent red throb on Record button) */
+  #editModeRecordBtn.edit-recording,
+  #edit-entry-modal #edit-modal-record-btn.edit-recording {
+    background-color: hsl(0, 90%, 50%);
+    color: hsl(0, 0%, 100%);
+    border-color: hsl(0, 90%, 50%);
+    @apply animate-pulse-record;
+  }
+
+  /* Edit modal: enforce text visibility in inputs */
+  #edit-entry-modal input.vd-input,
+  #edit-entry-modal textarea.vd-input {
+    color: hsl(var(--foreground));
+    -webkit-text-fill-color: hsl(var(--foreground));
+  }
+
+  #edit-entry-modal input.vd-input::placeholder,
+  #edit-entry-modal textarea.vd-input::placeholder {
+    color: hsl(var(--muted-foreground));
+    -webkit-text-fill-color: hsl(var(--muted-foreground));
+  }
+
+  /* Accent swatch colors (CSP-safe: no inline styles) */
+  [data-accent-swatch="green"] {
+    background-color: hsl(142, 71%, 45%);
+  }
+  [data-accent-swatch="blue"] {
+    background-color: hsl(217, 91%, 60%);
+  }
+  [data-accent-swatch="indigo"] {
+    background-color: hsl(239, 84%, 67%);
+  }
+  [data-accent-swatch="purple"] {
+    background-color: hsl(270, 67%, 60%);
+  }
+  [data-accent-swatch="red"] {
+    background-color: hsl(0, 72%, 55%);
+  }
+  [data-accent-swatch="orange"] {
+    background-color: hsl(25, 95%, 53%);
+  }
+  [data-accent-swatch="yellow"] {
+    background-color: hsl(48, 96%, 53%);
+  }
+
+  /* Transcription text size (small=14px, medium=16px, large=18px) */
+  html[data-transcription-size="small"] .vd-transcription-text {
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  html[data-transcription-size="medium"] .vd-transcription-text {
+    font-size: 1rem;
+    line-height: 1.6;
+  }
+
+  html[data-transcription-size="large"] .vd-transcription-text {
+    font-size: 1.125rem;
+    line-height: 1.6;
+  }
+
+  /* Calendar conflict: slot card selected state (persists after click) */
+  .slot-card.selected {
+    border-color: hsl(var(--accent));
+    background-color: hsl(var(--accent) / 0.05);
+  }
+
+  /* Calendar conflict: override button selected state */
+  .btn-override.selected {
+    box-shadow: 0 0 0 2px hsl(var(--accent));
+  }
+}

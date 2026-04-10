@@ -1,0 +1,84 @@
+{% extends "base_dashboard.html" %}
+{% load static i18n %}
+
+{% block title %}{% trans "Confirm Batch Calendar Events" %} - VoiceDiary{% endblock %}
+{% block page_title %}{% trans "Calendar Conflicts" %}{% endblock %}
+
+{% block dashboard_content %}
+<div class="space-y-6 animate-fade-in">
+  <div class="vd-card p-6">
+    <div class="border-b border-border pb-4 mb-4">
+      <h2 class="text-lg font-semibold text-foreground mb-2">{% trans "Batch Calendar Events" %}</h2>
+      <p class="text-sm text-muted-foreground">{{ input_text }}</p>
+      <span class="inline-flex items-center gap-1.5 rounded-md bg-destructive/10 text-destructive px-2.5 py-1 text-xs font-medium mt-2">
+        {% trans "Some time slots have conflicts. Resolve below." %}
+      </span>
+    </div>
+
+    <form id="batchConfirmForm" class="space-y-6">
+      {% for ev in events %}
+      <div class="rounded-lg border border-border p-4 {% if ev.has_conflict %}border-yellow-500/50 bg-yellow-500/5{% endif %}">
+        <div class="flex justify-between items-start mb-2">
+          <h3 class="font-medium text-foreground">{{ ev.summary }}</h3>
+          {% if ev.has_conflict %}
+          <span class="text-xs text-destructive font-medium">{% trans "Conflict" %}</span>
+          {% else %}
+          <span class="text-xs text-muted-foreground">{% trans "Available" %}</span>
+          {% endif %}
+        </div>
+        <p class="text-sm text-muted-foreground mb-3">
+          {% if ev.start_datetime %}{{ ev.start_datetime|date:"l, d M Y" }} {% trans "at" %} {{ ev.start_datetime|time:"H:i" }}{% endif %}
+          {% if ev.end_datetime %} - {{ ev.end_datetime|time:"H:i" }}{% endif %}
+        </p>
+
+        {% if ev.has_conflict %}
+        <div class="space-y-3">
+          <p class="text-xs font-medium text-foreground">{% trans "Choose alternative or override" %}</p>
+          <div class="event-resolutions" data-event-index="{{ ev.event_index }}">
+            <div class="day-nav-slot-container" data-event-index="{{ ev.event_index }}">
+              {% comment %}Day navigation and slots rendered by confirmation.js from alternative_slots_by_day{% endcomment %}
+            </div>
+            <button type="button" class="btn-override vd-btn px-3 py-1.5 text-sm bg-yellow-500 text-white hover:bg-yellow-600"
+                    data-event-index="{{ ev.event_index }}">
+              {% trans "Use original time anyway" %}
+            </button>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </form>
+
+    <div id="errorMessage" class="hidden rounded-lg bg-destructive/10 border border-destructive/20 p-3 mb-4 text-sm text-destructive"></div>
+
+    <div class="flex flex-wrap gap-3 pt-4 border-t border-border">
+      <button type="button" id="btnConfirm" class="vd-btn vd-btn-accent px-4 py-2 text-sm">
+        {% trans "Confirm and Create Events" %}
+      </button>
+      <button type="button" id="btnCancel" class="vd-btn vd-btn-ghost px-4 py-2 text-sm border border-input">
+        {% trans "Cancel" %}
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="loadingOverlay"
+     class="hidden fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+  <div class="flex flex-col items-center gap-3">
+    <div class="vd-spinner h-10 w-10 border-[3px]"></div>
+    <p class="text-sm text-muted-foreground">{% trans "Creating events..." %}</p>
+  </div>
+</div>
+
+{% csrf_token %}
+{% if batch_i18n %}{{ batch_i18n|json_script:"batch-i18n" }}{% endif %}
+<script>
+  window.batchId = "{{ batch.id }}";
+  window.eventsWithConflicts = {{ events_with_conflicts_json|safe }};
+  (function() {
+    var i18nEl = document.getElementById("batch-i18n");
+    window.batchI18n = i18nEl ? JSON.parse(i18nEl.textContent) : {};
+  })();
+</script>
+<script src="{% static 'batch_calendar/js/confirmation.js' %}"></script>
+{% endblock %}

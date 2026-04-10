@@ -1,0 +1,40 @@
+{% comment %}
+Toast notification container.
+Place once in base.html. JS manages showing/hiding toasts.
+
+Usage in base.html:
+  {% include "components/_toast.html" %}
+
+Django messages integration:
+  Messages from {% if messages %} loop are rendered as initial toasts.
+{% endcomment %}
+{% load i18n %}
+
+<div id="toastContainer"
+     class="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none"
+     aria-live="polite"
+     aria-atomic="true">
+  {% if messages %}
+  {% for message in messages %}
+  <div class="vd-toast pointer-events-auto
+    {% if message.tags == 'error' %}vd-toast-error
+    {% elif message.tags == 'warning' %}bg-card text-foreground border-yellow-500
+    {% else %}vd-toast-success{% endif %}"
+    data-toast-auto-dismiss="5000"
+    role="alert"
+  >
+    <div class="flex items-center justify-between gap-3">
+      <span>{{ message }}</span>
+      <button type="button"
+              onclick="this.closest('[data-toast-auto-dismiss]').remove()"
+              class="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="{% trans 'Dismiss' %}">
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>

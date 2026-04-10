@@ -1,0 +1,240 @@
+{% extends "base_dashboard.html" %}
+{% load static i18n %}
+
+{% block title %}{% trans "My Entries" %} - VoiceDiary{% endblock %}
+{% block page_title %}{% trans "My Entries" %}{% endblock %}
+
+{% block dashboard_top_right %}
+<a href="{% url 'retrieval:chat' %}"
+   class="vd-btn vd-btn-ghost px-2 py-1.5 text-sm gap-1.5">
+  {% trans "Chat" %}
+</a>
+{% endblock %}
+
+{% block dashboard_content %}
+<div class="space-y-4 animate-fade-in">
+
+  {# --- Filters --- #}
+  <div class="space-y-3">
+    {# Search bar #}
+    <div class="relative">
+      <svg class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><path stroke-linecap="round" d="m21 21-4.35-4.35"/>
+      </svg>
+      <input type="text" id="search-input"
+             class="vd-input pl-10 pr-8"
+             placeholder="{% trans 'Search entries...' %}"
+             autocomplete="off">
+      <button type="button" id="search-clear-btn"
+              class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="{% trans 'Clear search' %}">
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    {# Date presets #}
+    <div class="flex flex-wrap gap-2" id="date-presets">
+      <button type="button" class="vd-btn vd-btn-accent px-3 py-1.5 text-xs date-preset-btn" data-preset="all">{% trans "All" %}</button>
+      <button type="button" class="vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input date-preset-btn" data-preset="today">{% trans "Today" %}</button>
+      <button type="button" class="vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input date-preset-btn" data-preset="week">{% trans "This Week" %}</button>
+      <button type="button" class="vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input date-preset-btn" data-preset="month">{% trans "This Month" %}</button>
+    </div>
+  </div>
+
+  {# Meta info #}
+  <div id="entries-meta" class="hidden flex items-center gap-3 text-xs text-muted-foreground">
+    <span id="entry-count"></span>
+    <span id="searched-count" class="hidden"></span>
+    <button type="button" id="clear-filters-btn" class="hidden vd-btn vd-btn-ghost px-2 py-1 text-xs">{% trans "Clear filters" %}</button>
+  </div>
+
+  {# Loading initial #}
+  <div id="loading-initial" class="hidden flex justify-center py-12">
+    <div class="vd-spinner h-8 w-8 border-[3px]"></div>
+  </div>
+
+  {# Empty state #}
+  <div id="empty-state" class="hidden text-center py-12">
+    <div class="flex items-center justify-center h-16 w-16 rounded-2xl bg-muted mx-auto mb-4">
+      <svg class="h-8 w-8 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/>
+      </svg>
+    </div>
+    <h3 class="text-base font-semibold text-foreground mb-1">{% trans "No entries yet" %}</h3>
+    <p class="text-sm text-muted-foreground mb-4">{% trans "Record your first voice entry to get started." %}</p>
+    <a href="{% url 'recordings:record' %}" class="vd-btn vd-btn-accent px-4 py-2 text-sm">{% trans "Record Now" %}</a>
+  </div>
+
+  {# No results state #}
+  <div id="no-results-state" class="hidden text-center py-12">
+    <h3 class="text-base font-semibold text-foreground mb-1">{% trans "No matching entries" %}</h3>
+    <p class="text-sm text-muted-foreground mb-4">{% trans "Try adjusting your search or filters." %}</p>
+    <button type="button" id="no-results-clear-btn" class="vd-btn vd-btn-ghost px-4 py-2 text-sm border border-input"
+            onclick="document.getElementById('clear-filters-btn').click()">{% trans "Clear filters" %}</button>
+  </div>
+
+  {# Error state #}
+  <div id="error-state" class="hidden text-center py-12">
+    <h3 class="text-base font-semibold text-destructive mb-1">{% trans "Something went wrong" %}</h3>
+    <p class="text-sm text-muted-foreground mb-4">{% trans "We couldn't load your entries." %}</p>
+    <button type="button" id="retry-btn" class="vd-btn vd-btn-accent px-4 py-2 text-sm">{% trans "Retry" %}</button>
+  </div>
+
+  {# Entries list #}
+  <div id="entries-list" class="space-y-2"></div>
+
+  {# Loading more #}
+  <div id="loading-more" class="hidden flex justify-center py-4">
+    <div class="vd-spinner h-6 w-6"></div>
+  </div>
+
+  {# Edit entry modal #}
+  <dialog id="edit-entry-modal" class="relative fixed inset-0 z-50 m-auto w-full max-w-lg rounded-lg border bg-card p-0 shadow-xl backdrop:bg-foreground/40 backdrop:backdrop-blur-sm open:animate-fade-in" aria-labelledby="edit-modal-title">
+    <form id="edit-entry-form" class="p-6 space-y-4">
+      <div class="flex items-center justify-between gap-3">
+        <h2 id="edit-modal-title" class="text-lg font-semibold text-foreground">{% trans "Edit Entry" %}</h2>
+        <div class="flex items-center gap-2">
+          <input type="file" id="edit-entry-attachment-input" multiple
+                 accept="image/*,application/pdf,text/plain,text/csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,application/zip,application/x-rar-compressed"
+                 class="sr-only">
+          <button type="button" id="edit-entry-attach-btn"
+                  class="vd-btn vd-btn-ghost p-2 relative"
+                  aria-label="{% trans 'Attach files' %}">
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+            </svg>
+            <span id="edit-entry-attach-badge" class="hidden absolute -top-1 -right-1 h-4 w-4 rounded-full bg-accent text-accent-foreground text-[13px] font-bold flex items-center justify-center">0</span>
+          </button>
+        </div>
+      </div>
+      <div>
+        <label for="edit-entry-title" class="block text-sm font-medium text-foreground mb-1">{% trans "Title" %}</label>
+        <input type="text" id="edit-entry-title" class="vd-input w-full" maxlength="255" placeholder="{% trans 'Entry title' %}">
+      </div>
+      <div>
+        <label for="edit-entry-content" class="block text-sm font-medium text-foreground mb-1">{% trans "Content" %}</label>
+        <textarea id="edit-entry-content" class="vd-input vd-transcription-text w-full min-h-[140px]" rows="6" placeholder="{% trans 'Entry content' %}"></textarea>
+
+        {# Attachments list #}
+        <ul id="edit-entry-attachment-list" class="mt-2 space-y-1 text-sm text-muted-foreground"></ul>
+
+        {# Rewrite controls + record (inline) #}
+        <div class="flex flex-wrap items-center gap-2 mt-3">
+          <select id="rewrite-template-select"
+                  class="vd-input py-1.5 px-2 text-sm w-auto min-w-[120px]"
+                  {% if not can_rewrite %}disabled{% endif %}>
+            {% for tpl in rewrite_templates %}
+            <option value="{{ tpl.name }}"{% if tpl.name == "grammar" %} selected{% endif %}>{{ tpl.label }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" id="rewrite-btn"
+                  class="vd-btn px-3 py-1.5 text-sm gap-1.5 border border-input{% if not can_rewrite %} opacity-50 cursor-not-allowed{% endif %}"
+                  {% if not can_rewrite %}disabled title="{% trans 'Upgrade to Pro to use text rewriting' %}"{% endif %}
+                  aria-label="{% trans 'Rewrite text' %}">
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+            </svg>
+            <span>{% trans "Rewrite" %}</span>
+          </button>
+          <button type="button" id="undo-rewrite-btn"
+                  class="hidden vd-btn vd-btn-ghost px-3 py-1.5 text-sm gap-1.5 border border-input"
+                  aria-label="{% trans 'Undo rewrite' %}">
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a5 5 0 010 10H9m-6-10l4-4m-4 4l4 4"/>
+            </svg>
+            <span>{% trans "Undo" %}</span>
+          </button>
+          <div id="rewrite-spinner" class="hidden">
+            <div class="vd-spinner h-4 w-4 border-2"></div>
+          </div>
+          {% if can_edit and recorder_config %}
+          <div class="flex items-center gap-2 ml-auto">
+            <button type="button" id="edit-modal-record-btn"
+                    class="vd-record-btn vd-record-btn--sm"
+                    aria-label="{% trans 'Record to insert' %}">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 10v2a7 7 0 01-14 0v-2"/>
+              </svg>
+            </button>
+            <div id="edit-modal-recording-timer-wrap" class="min-w-[2.5rem]">
+              <span id="edit-modal-recording-timer" class="text-sm text-muted-foreground">00:00</span>
+            </div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="checkbox" id="edit-entry-create-new" class="rounded border-input">
+        <label for="edit-entry-create-new" class="text-sm text-foreground">{% trans "Create as new entry" %}</label>
+      </div>
+      <div class="flex items-center justify-end gap-3 pt-2">
+        <button type="button" id="edit-entry-cancel" class="vd-btn vd-btn-ghost px-4 py-2">{% trans "Cancel" %}</button>
+        <button type="submit" id="edit-entry-save" class="vd-btn vd-btn-accent px-4 py-2">{% trans "Save" %}</button>
+      </div>
+    </form>
+    <div id="edit-entry-loading" class="hidden absolute inset-0 flex items-center justify-center bg-card/80 rounded-lg">
+      <div class="flex flex-col items-center gap-3">
+        <div id="edit-entry-spinner" class="vd-spinner h-8 w-8 border-[3px]"></div>
+        <span id="edit-entry-loading-text" class="text-sm text-muted-foreground {% if not is_app_admin %}hidden{% endif %}">{% trans "Saving..." %}</span>
+      </div>
+    </div>
+  </dialog>
+
+  {# Attachment preview modal #}
+  <dialog id="attachment-preview-modal" class="fixed inset-0 z-50 m-auto w-full max-w-2xl max-h-[98vh] rounded-lg border bg-card p-0 shadow-xl backdrop:bg-foreground/40 backdrop:backdrop-blur-sm open:animate-fade-in" aria-labelledby="attachment-preview-title">
+    <div class="flex flex-col max-h-[98vh]">
+      <div class="flex items-center justify-between p-4 border-b border-border shrink-0">
+        <h2 id="attachment-preview-title" class="text-lg font-semibold text-foreground">{% trans "Attachment" %}</h2>
+        <button type="button" id="attachment-preview-close" class="vd-btn vd-btn-ghost p-2" aria-label="{% trans 'Close' %}">
+          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="flex-1 overflow-y-auto p-4 space-y-4">
+        <div id="attachment-preview-text" class="vd-transcription-text text-foreground whitespace-pre-wrap leading-relaxed text-sm"></div>
+        <div class="relative">
+          <div id="attachment-preview-carousel" class="overflow-x-auto overflow-y-hidden flex snap-x snap-mandatory gap-0 scroll-smooth w-full" style="scrollbar-width: none; -ms-overflow-style: none;">
+            <div id="attachment-preview-slides" class="flex min-w-full"></div>
+          </div>
+          <button type="button" id="attachment-preview-prev" class="hidden absolute left-0 top-1/2 -translate-y-1/2 -translate-x-2 z-10 vd-btn vd-btn-ghost p-2 rounded-full border border-input bg-card/90 shadow" aria-label="{% trans 'Previous' %}">
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <button type="button" id="attachment-preview-next" class="hidden absolute right-0 top-1/2 -translate-y-1/2 translate-x-2 z-10 vd-btn vd-btn-ghost p-2 rounded-full border border-input bg-card/90 shadow" aria-label="{% trans 'Next' %}">
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ entries_js_config|json_script:"entries-edit-config" }}
+<script>
+(function(){
+  var el = document.getElementById('entries-edit-config');
+  if (!el) return;
+  var c = JSON.parse(el.textContent);
+  window.ENTRIES_CAN_EDIT = c.can_edit;
+  window.ENTRIES_CAN_REWRITE = c.can_rewrite;
+  window.ENTRIES_RECORD_LABEL = c.record_label || 'Record';
+  window.ENTRIES_STOP_LABEL = c.stop_label || 'Stop';
+  window.ENTRIES_SAVE_FAILED = c.save_failed || 'Save failed';
+  window.ENTRIES_COULD_NOT_SAVE = c.could_not_save_entry || 'Could not save entry. Please try again.';
+})();
+</script>
+{% if can_edit and recorder_config %}
+{{ recorder_config|json_script:"recorder-config" }}
+<script src="{% static 'entries/js/edit_modal_recorder.js' %}"></script>
+{% endif %}
+<script src="{% static 'entries/js/entries.js' %}"></script>
+{% endblock %}

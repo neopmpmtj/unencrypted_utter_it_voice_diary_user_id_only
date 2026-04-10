@@ -1,0 +1,376 @@
+{% extends "base_input.html" %}
+{% load static i18n %}
+
+{% block title %}{% trans "Text Input" %} - VoiceDiary{% endblock %}
+
+{% block extra_head %}
+{{ block.super }}
+<link rel="manifest" href="{% url 'recordings:manifest' %}">
+<meta name="theme-color" content="hsl(142, 71%, 45%)">
+{% endblock %}
+
+{# --- Top bar center: empty for text --- #}
+{% block input_top_center %}{% endblock %}
+
+{# --- Row 2: Attach (aligned with voice/text dots) --- #}
+{% block input_row2_right %}
+<input type="file" id="textAttachmentInput" multiple
+       accept="image/*,application/pdf,text/plain,text/csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,application/zip,application/x-rar-compressed"
+       class="sr-only">
+<button type="button" id="textAttachBtn"
+        class="vd-btn vd-btn-ghost p-2 relative"
+        aria-label="{% trans 'Attach files' %}">
+  <svg class="h-6 w-6 sm:h-5 sm:w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round"
+          d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+  </svg>
+  <span id="attachBadge"
+        class="hidden absolute -top-1 -right-1 h-4 w-4 rounded-full bg-accent text-accent-foreground
+               text-[13px] font-bold flex items-center justify-center">0</span>
+</button>
+{% endblock %}
+
+{# --- Swipe dots: text is active --- #}
+{% block dot_text %}bg-accent{% endblock %}
+
+{% block input_content %}
+<div data-swipe-content class="relative flex-1 flex flex-col gap-4">
+
+  {# --- Attachment list --- #}
+  <ul id="textAttachmentList" class="space-y-1 text-sm text-muted-foreground"></ul>
+
+  {# --- Optional title field --- #}
+  <input type="text" id="textTitleInput"
+         class="vd-input text-sm"
+         placeholder="{% trans 'Title (optional)' %}"
+         maxlength="255">
+
+  {# --- Main text area --- #}
+  <textarea id="textInput"
+            class="vd-textarea flex-1 text-base leading-relaxed resize-none min-h-[200px]"
+            placeholder="{% trans 'Type your note here...' %}"
+            rows="8"
+            autofocus></textarea>
+
+  {# --- Action buttons --- #}
+  <div class="flex items-center justify-center gap-3 py-2">
+    <button type="button" id="textSaveBtn" disabled
+            class="vd-btn vd-btn-accent px-6 py-2.5 text-sm">
+      {% trans "Save" %}
+    </button>
+    <button type="button" id="textClearBtn" disabled
+            class="vd-btn vd-btn-ghost px-4 py-2.5 text-sm border border-input">
+      {% trans "Clear" %}
+    </button>
+  </div>
+
+  {# --- Success result --- #}
+  <div id="resultContainer" class="hidden rounded-lg border border-accent/30 bg-accent/5 p-4">
+    <p class="text-sm font-medium text-accent mb-1">{% trans "Note Saved" %}</p>
+    <p id="resultText" class="text-sm text-foreground whitespace-pre-wrap"></p>
+    <p class="mt-2 text-xs text-muted-foreground">
+      {% trans "Detected language" %}: <span id="detectedLang"></span>
+      <span id="attachmentCount" class="ml-3"></span>
+    </p>
+  </div>
+
+  {# --- Error display --- #}
+  <div id="errorContainer" class="hidden rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+    <p class="text-sm font-medium text-destructive mb-1">{% trans "Error" %}</p>
+    <p id="errorText" class="text-sm text-foreground"></p>
+  </div>
+
+  {# --- Processing spinner overlay --- #}
+  <div id="spinnerOverlay"
+       class="hidden absolute inset-0 flex items-center justify-center
+              bg-background/60 backdrop-blur-[2px] rounded-md">
+    <div class="flex flex-col items-center gap-3">
+      <div id="textInputSpinner" class="vd-spinner h-10 w-10 border-[3px]"></div>
+      <span id="spinnerText" class="text-sm text-muted-foreground {% if not is_app_admin %}hidden{% endif %}">{% trans "Processing..." %}</span>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/swipe_nav.js' %}"></script>
+<script>
+(function() {
+  'use strict';
+
+  // Swipe data
+  document.body.setAttribute('data-swipe-current', 'text');
+  document.body.setAttribute('data-swipe-voice-url', '{% url "recordings:record" %}');
+  document.body.setAttribute('data-swipe-text-url', '{% url "text_input:page" %}');
+
+  var textIngestUrl = '/text-input/ingest/';
+  var profileUrl = '{% url "accounts:profile" %}';
+
+  // DOM refs
+  var textTitleInput = document.getElementById('textTitleInput');
+  var textInput      = document.getElementById('textInput');
+  var textSaveBtn    = document.getElementById('textSaveBtn');
+  var textClearBtn   = document.getElementById('textClearBtn');
+  var resultContainer = document.getElementById('resultContainer');
+  var errorContainer  = document.getElementById('errorContainer');
+  var resultText     = document.getElementById('resultText');
+  var detectedLang   = document.getElementById('detectedLang');
+  var attachmentCount = document.getElementById('attachmentCount');
+  var errorText      = document.getElementById('errorText');
+
+  // Attachment refs
+  var textAttachBtn   = document.getElementById('textAttachBtn');
+  var textAttachInput = document.getElementById('textAttachmentInput');
+  var textAttachList  = document.getElementById('textAttachmentList');
+  var attachBadge     = document.getElementById('attachBadge');
+
+  var spinnerOverlay   = document.getElementById('spinnerOverlay');
+  var textInputSpinner = document.getElementById('textInputSpinner');
+  var spinnerText      = document.getElementById('spinnerText');
+
+  var selectedFiles = [];
+  var processingTimeoutId = null;
+
+  // File validation
+  var MAX_FILE_SIZE = 100 * 1024 * 1024;
+  var MAX_TOTAL_SIZE = 500 * 1024 * 1024;
+
+  function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    var k = 1024, sizes = ['B', 'KB', 'MB'];
+    var i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+  }
+
+  function validateFile(file) {
+    if (file.size > MAX_FILE_SIZE)
+      return file.name + ' {% trans "exceeds" %} ' + formatFileSize(MAX_FILE_SIZE);
+    return null;
+  }
+
+  function totalSize(arr) {
+    return arr.reduce(function(s, f) { return s + f.size; }, 0);
+  }
+
+  function escapeHtml(text) {
+    var d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
+  }
+
+  // Button states
+  function updateButtons() {
+    var hasText = textInput.value.trim().length > 0;
+    textSaveBtn.disabled = !hasText;
+    textClearBtn.disabled = !hasText && selectedFiles.length === 0;
+  }
+
+  function showSpinner(state) {
+    if (!spinnerOverlay) return;
+    spinnerOverlay.classList.remove('hidden');
+    if (textInputSpinner) {
+      textInputSpinner.classList.remove('vd-spinner--red', 'vd-spinner--green');
+      textInputSpinner.classList.add(state === 'uploading' ? 'vd-spinner--red' : 'vd-spinner--green');
+    }
+    if (spinnerText) {
+      spinnerText.textContent = state === 'uploading'
+        ? '{% trans "Uploading..." %}'
+        : '{% trans "Processing..." %}';
+    }
+  }
+
+  function hideSpinner() {
+    if (!spinnerOverlay) return;
+    spinnerOverlay.classList.add('hidden');
+    if (textInputSpinner) {
+      textInputSpinner.classList.remove('vd-spinner--red', 'vd-spinner--green');
+    }
+    if (processingTimeoutId) {
+      clearTimeout(processingTimeoutId);
+      processingTimeoutId = null;
+    }
+  }
+
+  textInput.addEventListener('input', updateButtons);
+
+  // Render attachment list
+  function renderAttachList() {
+    textAttachList.innerHTML = '';
+    selectedFiles.forEach(function(file, idx) {
+      var li = document.createElement('li');
+      li.className = 'flex items-center justify-between gap-2 text-sm';
+      li.innerHTML =
+        '<span class="truncate">' + escapeHtml(file.name) +
+        ' <span class="text-muted-foreground text-xs">(' + formatFileSize(file.size) + ')</span></span>' +
+        '<button type="button" class="text-destructive hover:text-destructive/80 text-xs shrink-0" data-idx="' + idx + '">&#10005;</button>';
+      li.querySelector('button').addEventListener('click', function() {
+        selectedFiles.splice(idx, 1);
+        renderAttachList();
+        updateButtons();
+      });
+      textAttachList.appendChild(li);
+    });
+    if (selectedFiles.length > 0) {
+      attachBadge.classList.remove('hidden');
+      attachBadge.classList.add('flex');
+      attachBadge.textContent = selectedFiles.length;
+    } else {
+      attachBadge.classList.add('hidden');
+      attachBadge.classList.remove('flex');
+    }
+  }
+
+  // Attach button
+  textAttachBtn.addEventListener('click', function() { textAttachInput.click(); });
+
+  textAttachInput.addEventListener('change', function(e) {
+    var files = Array.from(e.target.files);
+    var errors = [], valid = [];
+    files.forEach(function(f) {
+      var err = validateFile(f);
+      if (err) errors.push(err);
+      else valid.push(f);
+    });
+    if (errors.length) alert(errors.join('\n'));
+    if (valid.length) {
+      if (totalSize(selectedFiles.concat(valid)) > MAX_TOTAL_SIZE) {
+        alert('{% trans "Total file size exceeds limit." %}');
+      } else {
+        selectedFiles = selectedFiles.concat(valid);
+        renderAttachList();
+        updateButtons();
+      }
+    }
+    textAttachInput.value = '';
+  });
+
+  // Save
+  textSaveBtn.addEventListener('click', function() {
+    var text = textInput.value.trim();
+    var title = textTitleInput.value.trim();
+    if (!text) { showError('{% trans "Text is required" %}'); return; }
+
+    showSpinner('uploading');
+    textSaveBtn.disabled = true;
+    textClearBtn.disabled = true;
+
+    var formData = new FormData();
+    formData.append('text', text);
+    formData.append('template_type', 'plain');
+    if (title) formData.append('title', title);
+    selectedFiles.forEach(function(f) { formData.append('files', f); });
+
+    var csrfEl = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (csrfEl) formData.append('csrfmiddlewaretoken', csrfEl.value);
+
+    fetch(textIngestUrl, { method: 'POST', body: formData })
+      .then(function(r) { return r.json().then(function(d) { return { status: r.status, data: d }; }); })
+      .then(function(res) {
+        if (res.status === 201) {
+          showSpinner('processing');
+          showSuccess(res.data);
+          processingTimeoutId = setTimeout(function() {
+            processingTimeoutId = null;
+            hideSpinner();
+            clearForm();
+            updateButtons();
+          }, 5000);
+        } else if (res.status === 429 && res.data.error === 'quota_exceeded') {
+          hideSpinner();
+          showError(res.data.message || '{% trans "Daily token quota exceeded." %}');
+          textSaveBtn.disabled = false;
+          textClearBtn.disabled = false;
+        } else if (res.status === 403 && res.data.error === 'drive_not_connected') {
+          hideSpinner();
+          showError('{% trans "Connect Google Drive in your account settings to attach files." %}');
+          textSaveBtn.disabled = false;
+          textClearBtn.disabled = false;
+        } else {
+          hideSpinner();
+          showError(res.data.message || '{% trans "Error saving note" %}');
+          textSaveBtn.disabled = false;
+          textClearBtn.disabled = false;
+        }
+      })
+      .catch(function() {
+        hideSpinner();
+        showError('{% trans "Error saving note" %}');
+        textSaveBtn.disabled = false;
+        textClearBtn.disabled = false;
+      });
+  });
+
+  // Clear
+  textClearBtn.addEventListener('click', clearForm);
+
+  function clearForm() {
+    textInput.value = '';
+    textTitleInput.value = '';
+    selectedFiles = [];
+    renderAttachList();
+    resultContainer.classList.add('hidden');
+    errorContainer.classList.add('hidden');
+    hideSpinner();
+    if (pipelineWs) { try { pipelineWs.close(); } catch(_){} pipelineWs = null; }
+    updateButtons();
+    textInput.focus();
+  }
+
+  var pipelineWs = null;
+
+  function connectPipelineWs(itemId) {
+    if (pipelineWs) { try { pipelineWs.close(); } catch(_){} }
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var wsUrl = proto + '//' + location.host + '/ws/pipeline/' + itemId + '/';
+    try {
+      pipelineWs = new WebSocket(wsUrl);
+      pipelineWs.onmessage = function(evt) {
+        try {
+          var msg = JSON.parse(evt.data);
+          if (msg.status === 'calendar_conflict' || msg.conflict) {
+            if (window.VDTheme && window.VDTheme.showToast) {
+              window.VDTheme.showToast(
+                typeof window.ENTRIES_CALENDAR_CONFLICT_MSG !== 'undefined'
+                  ? window.ENTRIES_CALENDAR_CONFLICT_MSG
+                  : '{% trans "Calendar conflict detected. Redirecting to resolve..." %}',
+                'warning'
+              );
+            }
+            if (msg.confirmation_url) {
+              window.location.href = msg.confirmation_url;
+            }
+            return;
+          }
+          if (msg.type === 'complete') {
+            if (msg.content_text) resultText.textContent = msg.content_text;
+            hideSpinner();
+            clearForm();
+            updateButtons();
+          }
+        } catch(_){}
+      };
+      pipelineWs.onerror = function() {};
+      pipelineWs.onclose = function() { pipelineWs = null; };
+    } catch(_) {}
+  }
+
+  function showSuccess(data) {
+    resultContainer.classList.remove('hidden');
+    errorContainer.classList.add('hidden');
+    resultText.textContent = data.content_text || '';
+    detectedLang.textContent = data.detected_language || '{% trans "unknown" %}';
+    attachmentCount.textContent = data.attachment_count > 0
+      ? '{% trans "Attachments" %}: ' + data.attachment_count : '';
+    if (data.id) { connectPipelineWs(data.id); }
+  }
+
+  function showError(msg) {
+    errorContainer.classList.remove('hidden');
+    resultContainer.classList.add('hidden');
+    errorText.innerHTML = msg;
+  }
+
+  updateButtons();
+})();
+</script>
+{% endblock %}

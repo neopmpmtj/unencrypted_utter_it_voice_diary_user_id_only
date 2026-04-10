@@ -1,0 +1,156 @@
+{% extends "base_dashboard.html" %}
+{% load static i18n %}
+
+{% block title %}{% trans "Microphone Test" %} - VoiceDiary{% endblock %}
+{% block page_title %}{% trans "Microphone Test" %}{% endblock %}
+
+{% block dashboard_content %}
+<div class="space-y-6 animate-fade-in">
+  <p class="text-sm text-muted-foreground">
+    {% trans "Record for 5 seconds and play back to verify your microphone works correctly." %}
+  </p>
+
+  <div class="vd-card p-6 space-y-4">
+    <div id="micTestCountdown" class="hidden text-center">
+      <span id="micTestCountdownNumber" class="text-4xl font-bold text-accent">5</span>
+    </div>
+
+    <div id="micTestControls" class="flex flex-col items-center gap-4">
+      <button type="button" id="micTestStartBtn" class="vd-btn vd-btn-accent px-6 py-3">
+        {% trans "Start Record" %}
+      </button>
+    </div>
+
+    <div id="micTestPlayback" class="hidden space-y-3">
+      <p class="text-sm font-medium text-foreground">{% trans "Playback" %}</p>
+      <audio id="micTestAudio" controls class="w-full"></audio>
+      <button type="button" id="micTestAgainBtn" class="vd-btn vd-btn-secondary px-4 py-2 text-sm">
+        {% trans "Record Again" %}
+      </button>
+    </div>
+
+    <p id="micTestError" class="hidden text-sm text-destructive"></p>
+  </div>
+</div>
+
+<script>
+(function() {
+  var DURATION_SEC = 5;
+  var mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/wav', 'audio/mp4'];
+  var mimeType = 'audio/wav';
+  for (var i = 0; i < mimeTypes.length; i++) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mimeTypes[i])) {
+      mimeType = mimeTypes[i];
+      break;
+    }
+  }
+
+  var startBtn = document.getElementById('micTestStartBtn');
+  var againBtn = document.getElementById('micTestAgainBtn');
+  var countdownEl = document.getElementById('micTestCountdown');
+  var countdownNum = document.getElementById('micTestCountdownNumber');
+  var playbackEl = document.getElementById('micTestPlayback');
+  var audioEl = document.getElementById('micTestAudio');
+  var errorEl = document.getElementById('micTestError');
+
+  var mediaRecorder = null;
+  var stream = null;
+  var chunks = [];
+  var objectUrl = null;
+  var countdownInterval = null;
+
+  function hideError() {
+    errorEl.classList.add('hidden');
+    errorEl.textContent = '';
+  }
+
+  function showError(msg) {
+    errorEl.textContent = msg;
+    errorEl.classList.remove('hidden');
+  }
+
+  function stopStream() {
+    if (stream) {
+      stream.getTracks().forEach(function(t) { t.stop(); });
+      stream = null;
+    }
+  }
+
+  function reset() {
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+    }
+    playbackEl.classList.add('hidden');
+    startBtn.classList.remove('hidden');
+    startBtn.disabled = false;
+    againBtn.classList.add('hidden');
+    hideError();
+  }
+
+  function onRecordComplete() {
+    stopStream();
+    mediaRecorder = null;
+    countdownEl.classList.add('hidden');
+    startBtn.classList.remove('hidden');
+    startBtn.disabled = false;
+
+    var blob = new Blob(chunks, { type: mimeType });
+    chunks = [];
+    objectUrl = URL.createObjectURL(blob);
+    audioEl.src = objectUrl;
+    playbackEl.classList.remove('hidden');
+    againBtn.classList.remove('hidden');
+  }
+
+  function runCountdown() {
+    var remaining = DURATION_SEC;
+    countdownNum.textContent = String(remaining);
+    countdownEl.classList.remove('hidden');
+
+    countdownInterval = setInterval(function() {
+      remaining--;
+      countdownNum.textContent = String(remaining);
+      if (remaining <= 0) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+        mediaRecorder.stop();
+      }
+    }, 1000);
+  }
+
+  async function startRecord() {
+    hideError();
+    startBtn.disabled = true;
+    startBtn.classList.add('hidden');
+    againBtn.classList.add('hidden');
+    playbackEl.classList.add('hidden');
+    chunks = [];
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { sampleRate: 44100, channelCount: 1, echoCancellation: true, noiseSuppression: true }
+      });
+      mediaRecorder = new MediaRecorder(stream, { mimeType: mimeType });
+      mediaRecorder.ondataavailable = function(e) {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+      mediaRecorder.onstop = onRecordComplete;
+      mediaRecorder.start(1000);
+      runCountdown();
+    } catch (err) {
+      showError(err.message || '{% trans "Microphone access denied" %}');
+      startBtn.disabled = false;
+      startBtn.classList.remove('hidden');
+      stopStream();
+    }
+  }
+
+  startBtn.addEventListener('click', startRecord);
+  againBtn.addEventListener('click', function() {
+    reset();
+    startRecord();
+  });
+})();
+</script>
+{% endblock %}

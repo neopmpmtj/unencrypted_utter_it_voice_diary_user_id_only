@@ -1,0 +1,35 @@
+{% extends "base_auth.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Welcome" %} - VoiceDiary{% endblock %}
+
+{% block auth_title %}{% trans "Welcome to VoiceDiary" %}{% endblock %}
+{% block auth_subtitle %}{% trans "Choose your preferred language to get started" %}{% endblock %}
+
+{% block auth_content %}
+<form method="post" novalidate class="space-y-4">
+  {% csrf_token %}
+
+  <div class="space-y-3">
+    {% for radio in form.preferred_language %}
+    <label class="flex items-center gap-3 p-3 rounded-lg border border-border cursor-pointer
+                  hover:border-accent/50 has-[:checked]:border-accent has-[:checked]:bg-accent/5
+                  transition-colors"
+           onclick="this.querySelector('input').checked = true">
+      {{ radio.tag }}
+      <span class="text-sm font-medium text-foreground">{{ radio.choice_label }}</span>
+    </label>
+    {% endfor %}
+  </div>
+
+  {% if form.preferred_language.errors %}
+  {% for error in form.preferred_language.errors %}
+  <p class="text-xs text-destructive">{{ error }}</p>
+  {% endfor %}
+  {% endif %}
+
+  <button type="submit" class="vd-btn vd-btn-accent w-full py-2.5 text-sm">
+    {% trans "Continue" %}
+  </button>
+</form>
+{% endblock %}

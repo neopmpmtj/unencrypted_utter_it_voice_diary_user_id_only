@@ -1,0 +1,37 @@
+{% extends "base_dashboard.html" %}
+{% load static i18n %}
+
+{% block title %}{% trans "Listen to Last Recording" %} - VoiceDiary{% endblock %}
+{% block page_title %}{% trans "Listen to Last Recording" %}{% endblock %}
+
+{% block dashboard_content %}
+<div class="space-y-6 animate-fade-in">
+  <p class="text-sm text-muted-foreground">
+    {% blocktrans with hours=retention_hours %}Your last recording is available for up to {{ hours }} hour(s) after you record.{% endblocktrans %}
+  </p>
+
+  {% if error %}
+  <p class="text-sm text-destructive">{{ error }}</p>
+  {% elif recordings %}
+  <div class="space-y-4">
+    {% for rec in recordings %}
+    <div class="vd-card p-4 space-y-2">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div>
+          <p class="text-sm font-medium text-foreground">{{ rec.title }}</p>
+          <p class="text-xs text-muted-foreground">
+            {{ rec.occurred_at|date:"Y-m-d" }} {{ rec.occurred_at|time:"H:i" }}
+          </p>
+        </div>
+        <audio controls class="w-full sm:max-w-xs" preload="none" src="{% url 'recent_recordings:serve_audio' rec.id %}">
+          {% trans "Your browser does not support the audio element." %}
+        </audio>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-sm text-muted-foreground">{% blocktrans with hours=retention_hours %}No recording available. Recordings are kept for {{ hours }} hour(s).{% endblocktrans %}</p>
+  {% endif %}
+</div>
+{% endblock %}

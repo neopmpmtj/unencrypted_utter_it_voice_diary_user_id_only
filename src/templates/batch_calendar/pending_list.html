@@ -1,0 +1,34 @@
+{% extends "base_dashboard.html" %}
+{% load static i18n %}
+
+{% block title %}{% trans "Pending Calendar Events" %} - VoiceDiary{% endblock %}
+{% block page_title %}{% trans "Calendar" %}{% endblock %}
+
+{% block dashboard_content %}
+<div class="space-y-4 animate-fade-in">
+  <p class="text-sm text-muted-foreground">{% trans "Events that need your confirmation due to schedule conflicts." %}</p>
+
+  {% if pending_batches %}
+  {% for item in pending_batches %}
+  <div class="vd-card p-4 flex items-center justify-between gap-4">
+    <div class="min-w-0 flex-1">
+      <p class="text-sm font-semibold text-foreground truncate">{{ item.summary }}</p>
+      <p class="text-xs text-muted-foreground">{% trans "Batch calendar request" %}</p>
+    </div>
+    <a href="{% url 'batch_calendar:confirm' item.batch.id %}" class="vd-btn vd-btn-accent px-3 py-1.5 text-xs shrink-0">
+      {% trans "Resolve" %}
+    </a>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="text-center py-12">
+    <div class="flex items-center justify-center h-12 w-12 rounded-xl bg-accent/10 text-accent mx-auto mb-4">
+      <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+      </svg>
+    </div>
+    <p class="text-sm text-muted-foreground">{% trans "No pending calendar events. All confirmed." %}</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

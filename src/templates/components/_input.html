@@ -1,0 +1,33 @@
+{% comment %}
+Text input component.
+
+Usage:
+  {% include "components/_input.html" with id="email" type="email" placeholder="you@example.com" %}
+
+Variables:
+  id          : HTML id
+  name        : Form field name
+  type        : Input type (default: text)
+  placeholder : Placeholder text
+  value       : Initial value
+  required    : If truthy, field is required
+  disabled    : If truthy, field is disabled
+  maxlength   : Max character length
+  classes     : Extra CSS classes
+  autofocus   : If truthy, field gets focus on load
+  autocomplete: Autocomplete attribute value
+{% endcomment %}
+
+<input
+  type="{{ type|default:'text' }}"
+  {% if id %}id="{{ id }}"{% endif %}
+  {% if name %}name="{{ name }}"{% endif %}
+  {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}
+  {% if value %}value="{{ value }}"{% endif %}
+  {% if required %}required{% endif %}
+  {% if disabled %}disabled{% endif %}
+  {% if maxlength %}maxlength="{{ maxlength }}"{% endif %}
+  {% if autofocus %}autofocus{% endif %}
+  {% if autocomplete %}autocomplete="{{ autocomplete }}"{% endif %}
+  class="vd-input {{ classes }}"
+>

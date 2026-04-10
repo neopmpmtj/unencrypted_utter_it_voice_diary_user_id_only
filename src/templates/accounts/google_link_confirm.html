@@ -1,0 +1,33 @@
+{% extends "base_auth.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Link Google Account" %} - VoiceDiary{% endblock %}
+
+{% block auth_title %}{% trans "Link Google Account" %}{% endblock %}
+{% block auth_subtitle %}{% blocktrans with email=email %}Confirm linking Google account <strong>{{ email }}</strong>{% endblocktrans %}{% endblock %}
+
+{% block auth_content %}
+{% if form.non_field_errors %}
+<div class="rounded-lg bg-destructive/10 border border-destructive/20 p-3 mb-4">
+  {% for error in form.non_field_errors %}<p class="text-sm text-destructive">{{ error }}</p>{% endfor %}
+</div>
+{% endif %}
+
+<form method="post" novalidate class="space-y-4">
+  {% csrf_token %}
+  <input type="hidden" name="email" value="{{ email }}">
+
+  <div class="space-y-1.5">
+    <label for="id_password" class="block text-sm font-medium text-foreground">{% trans "Enter your password to confirm" %}</label>
+    <input type="password" id="id_password" name="password" required autocomplete="current-password"
+           class="vd-input {% if form.password.errors %}border-destructive{% endif %}">
+    {% for e in form.password.errors %}<p class="text-xs text-destructive">{{ e }}</p>{% endfor %}
+  </div>
+
+  <button type="submit" class="vd-btn vd-btn-accent w-full py-2.5 text-sm">{% trans "Link Account" %}</button>
+</form>
+{% endblock %}
+
+{% block auth_footer %}
+<a href="{% url 'accounts:login' %}" class="text-accent hover:underline">&larr; {% trans "Back to sign in" %}</a>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% comment %}
+Confirmation modal component.
+
+Usage:
+  {% include "components/_modal.html" with id="deleteConfirm" title="Delete Account" body="Are you sure?" confirm_label="Delete" confirm_variant="destructive" %}
+
+JS trigger:
+  document.getElementById('deleteConfirm').showModal();
+  -- OR --
+  document.getElementById('deleteConfirm').close();
+
+Variables:
+  id              : Required HTML id
+  title           : Modal title
+  body            : Modal body text
+  confirm_label   : Confirm button label (default: "Confirm")
+  confirm_variant : Button variant for confirm (default: "destructive")
+  cancel_label    : Cancel button label (default: "Cancel")
+{% endcomment %}
+{% load i18n %}
+
+<dialog
+  id="{{ id }}"
+  class="fixed inset-0 z-50 m-auto w-full max-w-md rounded-lg border bg-card p-0
+         shadow-xl backdrop:bg-foreground/40 backdrop:backdrop-blur-sm
+         open:animate-fade-in"
+>
+  <div class="p-6">
+    {% if title %}
+    <h2 class="text-lg font-semibold text-foreground mb-2">{{ title }}</h2>
+    {% endif %}
+    {% if body %}
+    <p class="text-sm text-muted-foreground mb-6">{{ body }}</p>
+    {% endif %}
+
+    <div class="flex items-center justify-end gap-3">
+      <button type="button"
+              onclick="this.closest('dialog').close()"
+              class="vd-btn vd-btn-ghost px-4 py-2">
+        {{ cancel_label|default:_("Cancel") }}
+      </button>
+      <button type="button"
+              id="{{ id }}_confirm"
+              class="vd-btn vd-btn-{{ confirm_variant|default:'destructive' }} px-4 py-2">
+        {{ confirm_label|default:_("Confirm") }}
+      </button>
+    </div>
+  </div>
+</dialog>

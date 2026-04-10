@@ -1,0 +1,59 @@
+{% comment %}
+Form field wrapper with label and error display.
+
+Usage:
+  {% include "components/_form_field.html" with field=form.email %}
+
+Variables:
+  field   : Django form field
+  classes : Extra classes for the wrapper div
+{% endcomment %}
+
+<div class="space-y-1.5 {{ classes }}">
+  {% if field.label %}
+  <label for="{{ field.id_for_label }}" class="block text-sm font-medium text-foreground">
+    {{ field.label }}
+  </label>
+  {% endif %}
+
+  {% if field.field.widget.input_type == 'checkbox' %}
+  <label class="inline-flex items-center gap-2 cursor-pointer select-none" for="{{ field.id_for_label }}">
+    <span class="relative">
+      <input type="checkbox" id="{{ field.id_for_label }}" name="{{ field.html_name }}"
+             {% if field.value %}checked{% endif %}
+             class="sr-only peer">
+      <span class="block w-9 h-5 rounded-full transition-colors duration-200 bg-muted peer-checked:bg-accent"></span>
+      <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 peer-checked:translate-x-4"></span>
+    </span>
+    {% if field.help_text %}
+    <span class="text-sm text-muted-foreground">{{ field.help_text }}</span>
+    {% endif %}
+  </label>
+  {% elif field.field.widget.input_type == 'select' or field.field.widget.attrs.type == 'select' %}
+  {{ field }}
+  {% else %}
+  <input
+    type="{{ field.field.widget.input_type|default:'text' }}"
+    id="{{ field.id_for_label }}"
+    name="{{ field.html_name }}"
+    {% if field.value %}value="{{ field.value }}"{% endif %}
+    {% if field.field.widget.attrs.placeholder %}placeholder="{{ field.field.widget.attrs.placeholder }}"{% endif %}
+    {% if field.field.required %}required{% endif %}
+    {% if field.field.widget.attrs.maxlength %}maxlength="{{ field.field.widget.attrs.maxlength }}"{% endif %}
+    {% if field.field.widget.attrs.autocomplete %}autocomplete="{{ field.field.widget.attrs.autocomplete }}"{% endif %}
+    class="vd-input {% if field.errors %}border-destructive focus-visible:ring-destructive{% endif %}"
+  >
+  {% endif %}
+
+  {% if field.errors %}
+  <ul class="text-xs text-destructive space-y-0.5">
+    {% for error in field.errors %}
+    <li>{{ error }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if field.help_text and not field.field.widget.input_type == 'checkbox' %}
+  <p class="text-xs text-muted-foreground">{{ field.help_text }}</p>
+  {% endif %}
+</div>

@@ -1,0 +1,40 @@
+{
+    "name": "Voice Diary",
+    "short_name": "VoiceDiary",
+    "description": "Record voice notes with automatic transcription and translation",
+    "start_url": "/voice/",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#4a90d9",
+    "orientation": "portrait-primary",
+    "icons": [
+        {
+            "src": "/static/icons/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/static/icons/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ],
+    "categories": ["productivity", "utilities"],
+    "screenshots": [],
+    "shortcuts": [
+        {
+            "name": "New Recording",
+            "short_name": "Record",
+            "description": "Start a new voice recording",
+            "url": "/voice/",
+            "icons": [
+                {
+                    "src": "/static/icons/icon-192.png",
+                    "sizes": "192x192"
+                }
+            ]
+        }
+    ]
+}

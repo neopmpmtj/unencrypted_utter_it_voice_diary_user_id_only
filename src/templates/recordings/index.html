@@ -1,0 +1,784 @@
+{% extends "base_input.html" %}
+{% load static i18n %}
+
+{% block title %}{% trans "Voice Input" %} - VoiceDiary{% endblock %}
+
+{% block extra_head %}
+{{ block.super }}
+<link rel="manifest" href="{% url 'recordings:manifest' %}">
+<meta name="theme-color" content="hsl(142, 71%, 45%)">
+{% endblock %}
+
+{# --- Top bar: center (empty) --- #}
+{% block input_top_center %}{% endblock %}
+
+{# --- Row 2: Edit + Attach (aligned with voice/text dots) --- #}
+{% block input_row2_right %}
+<button type="button" id="editEntryBtn"
+        class="vd-btn vd-btn-ghost p-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label="{% trans 'Edit last entry' %}"
+        disabled>
+  <svg class="h-6 w-6 sm:h-5 sm:w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round"
+          d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+  </svg>
+</button>
+<input type="file" id="recordingAttachmentInput" multiple
+       accept="image/*,application/pdf,text/plain,text/csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,application/zip,application/x-rar-compressed"
+       class="sr-only">
+<button type="button" id="recordingAttachBtn"
+        class="vd-btn vd-btn-ghost p-2 relative"
+        aria-label="{% trans 'Attach files' %}">
+  <svg class="h-6 w-6 sm:h-5 sm:w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round"
+          d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+  </svg>
+  <span id="attachBadge"
+        class="hidden absolute -top-1 -right-1 h-4 w-4 rounded-full bg-accent text-accent-foreground
+               text-[13px] font-bold flex items-center justify-center">0</span>
+</button>
+{% endblock %}
+
+{# --- Swipe dots: voice is active --- #}
+{% block dot_voice %}bg-accent{% endblock %}
+
+{% block input_content %}
+<div data-swipe-content class="flex-1 flex flex-col gap-4">
+
+  {# --- Quota exhausted message (token-based; recording allowed, text/rewrite/chat blocked) --- #}
+  <div id="quotaExhausted"
+       class="hidden rounded-lg bg-destructive/5 border border-destructive/30 px-4 py-2
+              text-sm text-destructive">
+    {% trans "Daily token quota reached. Text input, rewrites, and chat are disabled until tomorrow." %}
+  </div>
+
+  {# --- Offline banner --- #}
+  <div id="offlineBanner"
+       class="hidden rounded-lg bg-yellow-500/10 border border-yellow-500/30 px-4 py-2
+              text-sm text-yellow-700 dark:text-yellow-400">
+    {% trans "You're offline. Recordings will be saved locally and synced when you're back online." %}
+  </div>
+
+  {# --- Attachment list (compact, above text area) --- #}
+  <ul id="recordingAttachmentList" class="space-y-1 text-sm text-muted-foreground"></ul>
+
+  {# --- Main transcription area: read-only card shown when processing completes --- #}
+  <div class="relative flex-1 flex flex-col min-h-[200px]">
+    <div id="transcriptionCardWrap" class="flex-1 flex flex-col">
+      <div id="transcriptionPlaceholder" class="vd-card p-4 min-h-[200px] flex items-center justify-center text-muted-foreground text-sm">
+        {% trans "Your transcription will appear here..." %}
+      </div>
+      <div id="transcriptionCard" class="hidden vd-card p-4 min-h-[200px]">
+        <p id="transcriptionCardText" class="vd-transcription-text text-foreground whitespace-pre-wrap"></p>
+      </div>
+    </div>
+
+    {# --- Processing spinner overlay --- #}
+    <div id="spinnerOverlay"
+         class="hidden absolute inset-0 flex items-center justify-center
+                bg-background/60 backdrop-blur-[2px] rounded-md">
+      <div class="flex flex-col items-center gap-3">
+        <div id="recordingSpinner" class="vd-spinner h-10 w-10 border-[3px]"></div>
+        <span id="spinnerText" class="text-sm text-muted-foreground {% if not is_app_admin %}hidden{% endif %}">{% trans "Processing..." %}</span>
+      </div>
+    </div>
+  </div>
+
+  {# --- Edit mode (editing last session entry) --- #}
+  <div id="editModeWrap" class="hidden relative flex-1 flex flex-col gap-3">
+    <textarea id="editModeTextarea"
+              class="vd-textarea vd-transcription-text flex-1 leading-relaxed resize-none min-h-[200px]"
+              lang="{{ request.LANGUAGE_CODE|default:'pt-pt' }}"
+              placeholder="{% trans 'Edit your transcription...' %}"
+              rows="8"></textarea>
+    <div class="flex flex-wrap items-center justify-center gap-3">
+      <div class="flex items-center gap-2">
+        <button type="button" id="editModeRecordBtn"
+                class="vd-record-btn vd-record-btn--sm"
+                aria-label="{% trans 'Record to insert' %}">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 10v2a7 7 0 01-14 0v-2"/>
+          </svg>
+        </button>
+        <div id="editModeRecordingTimerWrap" class="min-w-[2.5rem]">
+          <span id="editModeRecordingTimer" class="recording-timer text-sm text-muted-foreground">00:00</span>
+        </div>
+      </div>
+      <button type="button" id="editModeSaveBtn"
+              class="vd-btn vd-btn-accent px-6 py-2.5 text-sm">
+        {% trans "Save" %}
+      </button>
+      <button type="button" id="editModeDismissBtn"
+              class="vd-btn vd-btn-ghost px-4 py-2.5 text-sm border border-input">
+        {% trans "Dismiss" %}
+      </button>
+    </div>
+    {# --- Edit mode save spinner overlay --- #}
+    <div id="editModeSpinnerOverlay"
+         class="hidden absolute inset-0 flex items-center justify-center
+                bg-background/60 backdrop-blur-[2px] rounded-md">
+      <div class="flex flex-col items-center gap-3">
+        <div id="editModeSpinner" class="vd-spinner h-10 w-10 border-[3px] vd-spinner--green"></div>
+        <span id="editModeSpinnerText" class="text-sm text-muted-foreground {% if not is_app_admin %}hidden{% endif %}">{% trans "Saving..." %}</span>
+      </div>
+    </div>
+  </div>
+
+  {# --- Recording controls --- #}
+  <div id="recordingControlsWrap" class="flex flex-col items-center justify-center gap-2 py-4">
+    <div class="flex items-center justify-center gap-4">
+    {# Primary: Record / Pause / Resume #}
+    <button type="button" id="recordBtn"
+            class="vd-record-btn"
+            title="{% trans 'Start Recording' %}">
+      {# Default: microphone icon #}
+      <svg id="iconRecord" class="h-9 w-9 sm:h-7 sm:w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M19 10v2a7 7 0 01-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8" y1="23" x2="16" y2="23"/>
+      </svg>
+      {# Pause icon (hidden) #}
+      <svg id="iconPause" class="h-9 w-9 sm:h-7 sm:w-7 hidden" fill="currentColor" viewBox="0 0 24 24">
+        <rect x="6" y="4" width="4" height="16" rx="1"/>
+        <rect x="14" y="4" width="4" height="16" rx="1"/>
+      </svg>
+      {# Resume / Play icon (hidden) #}
+      <svg id="iconResume" class="h-9 w-9 sm:h-7 sm:w-7 hidden" fill="currentColor" viewBox="0 0 24 24">
+        <polygon points="5,3 19,12 5,21"/>
+      </svg>
+    </button>
+
+    {# Secondary: Stop #}
+    <button type="button" id="stopBtn" disabled
+            class="vd-btn vd-btn-secondary px-5 py-2.5 text-sm hidden">
+      <svg class="h-6 w-6 sm:h-4 sm:w-4 mr-1.5" fill="currentColor" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="16" height="16" rx="2"/>
+      </svg>
+      {% trans "Stop" %}
+    </button>
+    </div>
+    <div id="recordingTimerWrap" class="min-h-[1.25rem]">
+      <span id="recordingTimer" class="recording-timer text-sm text-muted-foreground">00:00</span>
+    </div>
+  </div>
+
+  {# --- Error display --- #}
+  <div id="errorContainer" class="hidden rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+    <p class="text-sm font-medium text-destructive mb-1">{% trans "Error" %}</p>
+    <p id="errorText" class="text-sm text-foreground"></p>
+    <button type="button" onclick="location.reload()"
+            class="vd-btn vd-btn-secondary px-3 py-1.5 text-xs mt-3">
+      {% trans "Try Again" %}
+    </button>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script
+  src="{% static 'recordings/js/audio_recorder.js' %}?v=20260214-redesign"
+  data-swipe-current="voice"
+  data-swipe-voice-url="{% url 'recordings:record' %}"
+  data-swipe-text-url="{% url 'text_input:page' %}"
+></script>
+<script src="{% static 'js/swipe_nav.js' %}"></script>
+{{ recorder_config|json_script:"recorder-config" }}
+<script>
+(function() {
+  'use strict';
+
+  var config = JSON.parse(document.getElementById('recorder-config').textContent);
+
+  // Set swipe attributes on body for swipe_nav.js
+  document.body.setAttribute('data-swipe-current', 'voice');
+  document.body.setAttribute('data-swipe-voice-url', config.swipeVoiceUrl);
+  document.body.setAttribute('data-swipe-text-url', config.swipeTextUrl);
+
+  var showTimer = !!config.showTimer;
+
+  function updateTimerDisplay(duration) {
+    var s = VoiceDiaryRecorder.formatDuration(duration);
+    if (recordingTimer) recordingTimer.textContent = s;
+    if (editModeRecordingTimer) editModeRecordingTimer.textContent = s;
+  }
+
+  function resetTimerDisplay() {
+    updateTimerDisplay(0);
+  }
+
+  // Initialize recorder
+  var recorder = new VoiceDiaryRecorder({
+    uploadUrl: config.uploadUrl,
+    maxDuration: config.maxDuration,
+    maxFileSize: config.maxFileSize,
+  });
+
+  // DOM references
+  var recordBtn     = document.getElementById('recordBtn');
+  var stopBtn       = document.getElementById('stopBtn');
+  var iconRecord    = document.getElementById('iconRecord');
+  var iconPause     = document.getElementById('iconPause');
+  var iconResume    = document.getElementById('iconResume');
+  var transcriptionCardWrap   = document.getElementById('transcriptionCardWrap');
+  var transcriptionCard      = document.getElementById('transcriptionCard');
+  var transcriptionCardText  = document.getElementById('transcriptionCardText');
+  var transcriptionPlaceholder = document.getElementById('transcriptionPlaceholder');
+  var spinnerOverlay    = document.getElementById('spinnerOverlay');
+  var spinnerText       = document.getElementById('spinnerText');
+  var recordingSpinner  = document.getElementById('recordingSpinner');
+  var errorContainer    = document.getElementById('errorContainer');
+  var errorText         = document.getElementById('errorText');
+  var offlineBanner     = document.getElementById('offlineBanner');
+
+  // Attachment elements
+  var recordingAttachBtn   = document.getElementById('recordingAttachBtn');
+  var recordingAttachInput = document.getElementById('recordingAttachmentInput');
+  var recordingAttachList  = document.getElementById('recordingAttachmentList');
+  var attachBadge          = document.getElementById('attachBadge');
+
+  var editEntryBtn         = document.getElementById('editEntryBtn');
+  var editModeWrap         = document.getElementById('editModeWrap');
+  var editModeTextarea     = document.getElementById('editModeTextarea');
+  var editModeRecordBtn    = document.getElementById('editModeRecordBtn');
+  var editModeSaveBtn      = document.getElementById('editModeSaveBtn');
+  var editModeDismissBtn   = document.getElementById('editModeDismissBtn');
+  var editModeSpinnerOverlay = document.getElementById('editModeSpinnerOverlay');
+  var editModeSpinnerText   = document.getElementById('editModeSpinnerText');
+
+  var recordingTimer         = document.getElementById('recordingTimer');
+  var recordingTimerWrap     = document.getElementById('recordingTimerWrap');
+  var editModeRecordingTimer = document.getElementById('editModeRecordingTimer');
+  var editModeRecordingTimerWrap = document.getElementById('editModeRecordingTimerWrap');
+
+  if (!showTimer) {
+    if (recordingTimerWrap) recordingTimerWrap.classList.add('hidden');
+    if (editModeRecordingTimerWrap) editModeRecordingTimerWrap.classList.add('hidden');
+  }
+
+  // Quota UI elements
+  var quotaExhausted       = document.getElementById('quotaExhausted');
+
+  var lastSessionItemId    = null;
+  var lastSessionContent   = '';
+  var editFeatureAllowed   = true; // updated by quota fetch
+
+  // ===== Entry Session =====
+  // Owns the file attachment list and persists across the full entry lifecycle
+  // (recording through editing). The recorder itself is file-agnostic.
+  var session = {
+    active: false,
+    phase: null,       // 'recording' | 'editing'
+    files: [],
+
+    start: function(phase) {
+      this.active = true;
+      this.phase = phase;
+      this.files = [];
+      refreshAttachUI();
+    },
+
+    addFiles: function(newFiles) {
+      this.files.push.apply(this.files, newFiles);
+      refreshAttachUI();
+    },
+
+    removeFile: function(index) {
+      this.files.splice(index, 1);
+      refreshAttachUI();
+    },
+
+    end: function() {
+      this.active = false;
+      this.phase = null;
+      this.files = [];
+      refreshAttachUI();
+    }
+  };
+
+  // Icons helper
+  function showIcon(name) {
+    iconRecord.classList.toggle('hidden', name !== 'record');
+    iconPause.classList.toggle('hidden', name !== 'pause');
+    iconResume.classList.toggle('hidden', name !== 'resume');
+  }
+
+  // State machine UI handler
+  recorder.onStateChange = function(state) {
+    // Reset classes
+    recordBtn.classList.remove('recording', 'paused');
+
+    switch (state) {
+      case 'idle':
+        recordBtn.disabled = false;
+        stopBtn.classList.add('hidden');
+        stopBtn.disabled = true;
+        showIcon('record');
+        spinnerOverlay.classList.add('hidden');
+        if (recordingSpinner) {
+          recordingSpinner.classList.remove('vd-spinner--red', 'vd-spinner--green');
+        }
+        if (transcriptionCard && transcriptionPlaceholder) {
+          transcriptionCard.classList.add('hidden');
+          transcriptionPlaceholder.classList.remove('hidden');
+        }
+        break;
+
+      case 'recording':
+        recordBtn.disabled = false;
+        recordBtn.classList.add('recording');
+        stopBtn.classList.remove('hidden');
+        stopBtn.disabled = false;
+        showIcon('pause');
+        break;
+
+      case 'paused':
+        recordBtn.disabled = false;
+        recordBtn.classList.add('paused');
+        showIcon('resume');
+        break;
+
+      case 'uploading':
+        recordBtn.disabled = true;
+        stopBtn.classList.add('hidden');
+        stopBtn.disabled = true;
+        showIcon('record');
+        spinnerOverlay.classList.remove('hidden');
+        if (recordingSpinner) {
+          recordingSpinner.classList.remove('vd-spinner--green');
+          recordingSpinner.classList.add('vd-spinner--red');
+        }
+        spinnerText.textContent = '{% trans "Uploading..." %}';
+        break;
+
+      case 'processing':
+        recordBtn.disabled = true;
+        stopBtn.classList.add('hidden');
+        stopBtn.disabled = true;
+        showIcon('record');
+        if (config.isAppAdmin) {
+          spinnerOverlay.classList.remove('hidden');
+          if (recordingSpinner) {
+            recordingSpinner.classList.remove('vd-spinner--red');
+            recordingSpinner.classList.add('vd-spinner--green');
+          }
+          spinnerText.textContent = '{% trans "Processing..." %}';
+        } else {
+          spinnerOverlay.classList.add('hidden');
+        }
+        break;
+
+      case 'content_ready':
+        recordBtn.disabled = true;
+        stopBtn.classList.add('hidden');
+        stopBtn.disabled = true;
+        showIcon('record');
+        spinnerOverlay.classList.add('hidden');
+        break;
+
+      case 'done':
+        recordBtn.disabled = false;
+        stopBtn.classList.add('hidden');
+        showIcon('record');
+        spinnerOverlay.classList.add('hidden');
+        if (recordingSpinner) {
+          recordingSpinner.classList.remove('vd-spinner--red', 'vd-spinner--green');
+        }
+        break;
+
+      case 'error':
+        recordBtn.disabled = false;
+        stopBtn.classList.add('hidden');
+        showIcon('record');
+        spinnerOverlay.classList.add('hidden');
+        if (recordingSpinner) {
+          recordingSpinner.classList.remove('vd-spinner--red', 'vd-spinner--green');
+        }
+        break;
+    }
+  };
+
+  recorder.onDurationUpdate = showTimer ? function(duration) {
+    updateTimerDisplay(duration);
+  } : function() {};
+
+  // Status update (spinner text only)
+  recorder.onStatusUpdate = function(data) {
+    if (data.message) {
+      spinnerText.textContent = data.message;
+    }
+  };
+
+  function showTranscriptionContent(content) {
+    transcriptionPlaceholder.classList.add('hidden');
+    transcriptionCardText.textContent = content || '{% trans "No transcription available" %}';
+    transcriptionCard.classList.remove('hidden');
+    lastSessionItemId = recorder.currentItemId;
+    lastSessionContent = content || '';
+    if (session.phase === 'recording') {
+      session.end();
+    }
+    updateEditButtonState();
+  }
+
+  recorder.onContentReady = function(data) {
+    showTranscriptionContent(data.content_text);
+  };
+
+  recorder.onComplete = function(data) {
+    showTranscriptionContent(data.content_text);
+  };
+
+  function updateEditButtonState() {
+    var hasContent = lastSessionItemId && !transcriptionCard.classList.contains('hidden') && session.phase !== 'editing';
+    var canEdit = hasContent && editFeatureAllowed;
+    editEntryBtn.disabled = !canEdit;
+    if (hasContent && !editFeatureAllowed) {
+      editEntryBtn.title = '{% trans "Editing is available on the Pro plan" %}';
+    } else {
+      editEntryBtn.title = '{% trans "Edit last entry" %}';
+    }
+  }
+
+  function enterEditMode() {
+    if (!lastSessionItemId) return;
+    session.start('editing');
+    transcriptionCardWrap.classList.add('hidden');
+    editModeWrap.classList.remove('hidden');
+    editModeTextarea.value = lastSessionContent;
+    editModeTextarea.focus();
+    document.getElementById('recordingControlsWrap').classList.add('hidden');
+    updateEditButtonState();
+  }
+
+  function exitEditMode(revertToOriginal) {
+    session.end();
+    editModeWrap.classList.add('hidden');
+    transcriptionCardWrap.classList.remove('hidden');
+    document.getElementById('recordingControlsWrap').classList.remove('hidden');
+    if (revertToOriginal && lastSessionContent) {
+      transcriptionCardText.textContent = lastSessionContent;
+      transcriptionCard.classList.remove('hidden');
+    }
+    updateEditButtonState();
+    if (editRecorder && (editRecorder.state === 'recording' || editRecorder.state === 'paused')) {
+      editRecorder.stopRecording().catch(function() {});
+      editModeRecordBtn.classList.remove('edit-recording');
+      editModeRecordBtn.setAttribute('aria-label', '{% trans "Record" %}');
+      editModeSaveBtn.disabled = false;
+      editModeDismissBtn.disabled = false;
+    }
+  }
+
+  var editRecorder = null;
+  function ensureEditRecorder() {
+    if (!editRecorder) {
+      editRecorder = new VoiceDiaryRecorder({
+        uploadUrl: config.uploadUrl,
+        maxDuration: config.maxDuration,
+        maxFileSize: config.maxFileSize,
+        transcribeOnly: true,
+      });
+      editRecorder.onTranscriptionReady = function(data) {
+        var text = data.transcribed_text || '';
+        if (text && editModeTextarea) {
+          var ta = editModeTextarea;
+          var start = ta.selectionStart;
+          var end = ta.selectionEnd;
+          var before = ta.value.substring(0, start);
+          var after = ta.value.substring(end);
+          ta.value = before + text + (text.endsWith(' ') ? '' : ' ') + after;
+          ta.selectionStart = ta.selectionEnd = start + text.length + (text.endsWith(' ') ? 0 : 1);
+          ta.focus();
+        }
+        editModeRecordBtn.classList.remove('edit-recording');
+        editModeRecordBtn.setAttribute('aria-label', '{% trans "Record" %}');
+        editModeSaveBtn.disabled = false;
+        editModeDismissBtn.disabled = false;
+      };
+      editRecorder.onError = function(err) {
+        if (window.VDTheme) window.VDTheme.showToast(err.message || '{% trans "Transcription failed" %}', 'error');
+        editModeRecordBtn.classList.remove('edit-recording');
+        editModeRecordBtn.setAttribute('aria-label', '{% trans "Record" %}');
+        editModeSaveBtn.disabled = false;
+        editModeDismissBtn.disabled = false;
+      };
+      editRecorder.onTranscriptionDiscarded = function(reason) {
+        if (window.VDTheme) window.VDTheme.showToast(reason, 'info');
+        editModeRecordBtn.classList.remove('edit-recording');
+        editModeRecordBtn.setAttribute('aria-label', '{% trans "Record" %}');
+        editModeSaveBtn.disabled = false;
+        editModeDismissBtn.disabled = false;
+      };
+      if (showTimer) {
+        editRecorder.onDurationUpdate = function(duration) {
+          updateTimerDisplay(duration);
+        };
+      }
+    }
+    return editRecorder;
+  }
+
+  // Error handler
+  recorder.onError = function(error) {
+    errorContainer.classList.remove('hidden');
+    errorText.textContent = error.message || '{% trans "An error occurred" %}';
+    spinnerOverlay.classList.add('hidden');
+    if (recordingSpinner) {
+      recordingSpinner.classList.remove('vd-spinner--red', 'vd-spinner--green');
+    }
+  };
+
+  recorder.onGuardDiscard = function(reason) {
+    if (window.VDTheme) window.VDTheme.showToast(reason, 'info');
+  };
+
+  // Record button: start / pause / resume
+  recordBtn.addEventListener('click', function() {
+    if (recorder.state === 'recording') {
+      recorder.pauseRecording();
+    } else if (recorder.state === 'paused') {
+      recorder.resumeRecording();
+    } else {
+      if (!session.active) {
+        session.start('recording');
+      }
+      recorder.setTemplateType('plain');
+      if (showTimer) resetTimerDisplay();
+      recorder.startRecording().then(function() {
+        errorContainer.classList.add('hidden');
+        if (transcriptionCard && transcriptionPlaceholder) {
+          transcriptionCard.classList.add('hidden');
+          transcriptionPlaceholder.classList.remove('hidden');
+        }
+      }).catch(function(err) {
+        if (window.VDTheme) window.VDTheme.showToast(
+          '{% trans "Could not start recording" %}: ' + err.message, 'error');
+      });
+    }
+  });
+
+  // Stop button: pass session files to recorder
+  stopBtn.addEventListener('click', function() {
+    recorder.stopRecording(session.files).catch(function(err) {
+      console.error('Stop recording error:', err);
+    });
+  });
+
+  // Edit entry button
+  editEntryBtn.addEventListener('click', function() {
+    if (editEntryBtn.disabled) return;
+    enterEditMode();
+  });
+
+  // Edit mode: Save (sends FormData with text + session files)
+  editModeSaveBtn.addEventListener('click', function() {
+    var content = editModeTextarea.value.trim();
+    if (!content) {
+      if (window.VDTheme) window.VDTheme.showToast('{% trans "Please enter some text to save." %}', 'error');
+      return;
+    }
+    var url = (config.updateEntryUrlTemplate || '/voice/update/{id}/').replace('{id}', lastSessionItemId);
+    var csrfToken = document.querySelector('[name=csrfmiddlewaretoken]');
+    csrfToken = csrfToken ? csrfToken.value : '';
+    editModeSaveBtn.disabled = true;
+
+    if (editModeSpinnerOverlay) {
+      editModeSpinnerOverlay.classList.remove('hidden');
+      if (editModeSpinnerText) {
+        editModeSpinnerText.textContent = session.files.length > 0
+          ? '{% trans "Uploading..." %}'
+          : '{% trans "Saving..." %}';
+      }
+    }
+
+    var fd = new FormData();
+    fd.append('content_text', content);
+    session.files.forEach(function(f) { fd.append('files', f); });
+
+    fetch(url, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': csrfToken },
+      body: fd,
+    }).then(function(res) {
+      if (!res.ok) return res.json().then(function(d) { throw new Error(d.message || d.error || '{% trans "Save failed" %}'); });
+      lastSessionContent = '';
+      transcriptionCardText.textContent = '';
+      transcriptionCard.classList.add('hidden');
+      transcriptionPlaceholder.classList.remove('hidden');
+      lastSessionItemId = null;
+      exitEditMode(false);
+      if (window.VDTheme) window.VDTheme.showToast('{% trans "Changes saved" %}', 'success');
+    }).catch(function(err) {
+      if (window.VDTheme) window.VDTheme.showToast(err.message || '{% trans "Failed to save" %}', 'error');
+    }).finally(function() {
+      editModeSaveBtn.disabled = false;
+      if (editModeSpinnerOverlay) editModeSpinnerOverlay.classList.add('hidden');
+    });
+  });
+
+  // Edit mode: Dismiss (confirm only if edits made or files attached)
+  editModeDismissBtn.addEventListener('click', function() {
+    var hasEdits = editModeTextarea.value !== lastSessionContent || session.files.length > 0;
+    if (hasEdits && !confirm('{% trans "Discard changes and exit edit mode?" %}')) {
+      return;
+    }
+    exitEditMode(true);
+  });
+
+  // Edit mode: Record to insert (toggle start/stop)
+  editModeRecordBtn.addEventListener('click', function() {
+    if (editRecorder && (editRecorder.state === 'uploading' || editRecorder.state === 'processing')) {
+      return;
+    }
+    if (editRecorder && (editRecorder.state === 'recording' || editRecorder.state === 'paused')) {
+      editRecorder.stopRecording().catch(function() {});
+      editModeRecordBtn.classList.remove('edit-recording');
+      editModeRecordBtn.setAttribute('aria-label', '{% trans "Record" %}');
+      editModeSaveBtn.disabled = false;
+      editModeDismissBtn.disabled = false;
+      return;
+    }
+    var er = ensureEditRecorder();
+    er.setTemplateType('plain');
+    if (showTimer) resetTimerDisplay();
+    er.startRecording().then(function() {
+      editModeRecordBtn.classList.add('edit-recording');
+      editModeRecordBtn.setAttribute('aria-label', '{% trans "Stop" %}');
+      editModeSaveBtn.disabled = true;
+      editModeDismissBtn.disabled = true;
+    }).catch(function(err) {
+      if (window.VDTheme) window.VDTheme.showToast(err.message || '{% trans "Could not start recording" %}', 'error');
+    });
+  });
+
+  updateEditButtonState();
+
+  // ===== Quota Initialization =====
+  function applyQuotaUI(quota) {
+    if (!quota) return;
+
+    if (quota.features) {
+      editFeatureAllowed = !!quota.features.edit;
+      updateEditButtonState();
+    }
+
+    var tok = quota.tokens || {};
+    var limit = tok.limit || 0;
+    var remain = tok.remaining;
+    if (limit > 0 && remain !== undefined && remain <= 0) {
+      quotaExhausted.classList.remove('hidden');
+    }
+  }
+
+  // Fetch quota on page load and apply it
+  recorder.fetchAndApplyQuota().then(function(quota) {
+    applyQuotaUI(quota);
+  });
+
+  // ===== File Attachment Handling =====
+  var MAX_FILE_SIZE = 100 * 1024 * 1024;
+  var MAX_TOTAL_SIZE = 500 * 1024 * 1024;
+
+  function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    var k = 1024;
+    var sizes = ['B', 'KB', 'MB'];
+    var i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+  }
+
+  function validateFile(file) {
+    if (file.size > MAX_FILE_SIZE) {
+      return file.name + ' {% trans "exceeds maximum size of" %} ' + formatFileSize(MAX_FILE_SIZE);
+    }
+    return null;
+  }
+
+  function totalSize(arr) {
+    return arr.reduce(function(s, f) { return s + f.size; }, 0);
+  }
+
+  function escapeHtml(text) {
+    var d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
+  }
+
+  function refreshAttachUI() {
+    renderAttachList(session.files, recordingAttachList, attachBadge);
+  }
+
+  function renderAttachList(fileArray, listEl, badgeEl) {
+    listEl.innerHTML = '';
+    fileArray.forEach(function(file, idx) {
+      var li = document.createElement('li');
+      li.className = 'flex items-center justify-between gap-2 text-sm';
+      li.innerHTML =
+        '<span class="truncate">' + escapeHtml(file.name) +
+        ' <span class="text-muted-foreground text-xs">(' + formatFileSize(file.size) + ')</span></span>' +
+        '<button type="button" class="text-destructive hover:text-destructive/80 text-xs shrink-0" data-idx="' + idx + '">&#10005;</button>';
+      li.querySelector('button').addEventListener('click', function() {
+        session.removeFile(idx);
+      });
+      listEl.appendChild(li);
+    });
+    if (badgeEl) {
+      if (fileArray.length > 0) {
+        badgeEl.classList.remove('hidden');
+        badgeEl.classList.add('flex');
+        badgeEl.textContent = fileArray.length;
+      } else {
+        badgeEl.classList.add('hidden');
+        badgeEl.classList.remove('flex');
+      }
+    }
+  }
+
+  // Attach button: auto-starts a recording session if none active
+  recordingAttachBtn.addEventListener('click', function() { recordingAttachInput.click(); });
+
+  recordingAttachInput.addEventListener('change', function(e) {
+    var files = Array.from(e.target.files);
+    var errors = [];
+    var valid = [];
+    files.forEach(function(f) {
+      var err = validateFile(f);
+      if (err) errors.push(err);
+      else valid.push(f);
+    });
+    if (errors.length) alert(errors.join('\n'));
+    if (valid.length) {
+      if (totalSize(session.files.concat(valid)) > MAX_TOTAL_SIZE) {
+        alert('{% trans "Total file size exceeds limit." %}');
+        recordingAttachInput.value = '';
+        return;
+      }
+      if (!session.active) {
+        session.start('recording');
+      }
+      session.addFiles(valid);
+    }
+    recordingAttachInput.value = '';
+  });
+
+  // Offline detection
+  function updateOnlineStatus() {
+    offlineBanner.classList.toggle('hidden', navigator.onLine);
+  }
+  window.addEventListener('online', updateOnlineStatus);
+  window.addEventListener('offline', updateOnlineStatus);
+  updateOnlineStatus();
+
+  // Service worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register(config.serviceWorkerUrl)
+      .then(function(reg) { window.registration = reg; })
+      .catch(function() {});
+  }
+})();
+</script>
+{% endblock %}

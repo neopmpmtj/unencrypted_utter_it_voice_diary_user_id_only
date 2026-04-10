@@ -1,0 +1,24 @@
+{% comment %}
+Loading spinner component.
+
+Usage:
+  {% include "components/_spinner.html" %}
+  {% include "components/_spinner.html" with size="lg" %}
+
+Variables:
+  size    : sm | md | lg  (default: md)
+  classes : Extra CSS classes
+{% endcomment %}
+{% load i18n %}
+
+{% with spinner_size=size|default:"md" %}
+<div
+  role="status"
+  aria-label="{% trans 'Loading' %}"
+  class="vd-spinner
+    {% if spinner_size == 'sm' %}h-4 w-4{% elif spinner_size == 'lg' %}h-10 w-10 border-[3px]{% else %}h-6 w-6{% endif %}
+    {{ classes }}"
+>
+  <span class="sr-only">{% trans "Loading..." %}</span>
+</div>
+{% endwith %}

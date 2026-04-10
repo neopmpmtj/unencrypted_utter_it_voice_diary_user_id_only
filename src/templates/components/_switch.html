@@ -1,0 +1,34 @@
+{% comment %}
+Toggle switch component.
+
+Usage:
+  {% include "components/_switch.html" with id="reviewMode" checked=enable_review_mode label="Review before saving" %}
+
+Variables:
+  id      : Required HTML id for the underlying checkbox
+  checked : If truthy, switch starts on
+  label   : Label text displayed beside the switch
+  name    : Optional form field name
+{% endcomment %}
+
+<label class="inline-flex items-center gap-3 cursor-pointer select-none" for="{{ id }}">
+  <span class="relative">
+    <input
+      type="checkbox"
+      id="{{ id }}"
+      {% if name %}name="{{ name }}"{% endif %}
+      {% if checked %}checked{% endif %}
+      class="sr-only peer"
+      role="switch"
+      aria-checked="{{ checked|yesno:'true,false' }}"
+    >
+    <span class="vd-switch peer-checked:[&]:bg-accent peer-focus-visible:[&]:ring-2 peer-focus-visible:[&]:ring-accent"
+          aria-hidden="true"
+          style="background-color: {{ checked|yesno:'hsl(var(--accent)),hsl(var(--muted))' }};">
+      <span class="vd-switch-thumb {{ checked|yesno:'translate-x-5,translate-x-0' }}"></span>
+    </span>
+  </span>
+  {% if label %}
+  <span class="text-sm text-muted-foreground">{{ label }}</span>
+  {% endif %}
+</label>

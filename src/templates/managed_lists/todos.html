@@ -1,0 +1,233 @@
+{% extends "base_dashboard.html" %}
+{% load static i18n %}
+
+{% block title %}{% trans "To-Do List" %} - VoiceDiary{% endblock %}
+{% block page_title %}{% trans "To-Do List" %}{% endblock %}
+
+{% block dashboard_top_right %}
+<button type="button" id="add-task-btn"
+        class="vd-btn vd-btn-accent px-3 py-1.5 text-sm gap-1.5">
+  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+  </svg>
+  <span class="hidden sm:inline">{% trans "Add Task" %}</span>
+</button>
+{% endblock %}
+
+{% block dashboard_content %}
+<div class="space-y-4 animate-fade-in" id="todos-root">
+
+  {# --- Status filter tabs --- #}
+  <div class="flex flex-wrap gap-1.5" id="status-tabs">
+    <button type="button" class="status-tab vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input" data-status="all">
+      {% trans "All" %} <span class="status-count ml-1 hidden" data-for="all"></span>
+    </button>
+    <button type="button" class="status-tab vd-btn vd-btn-accent px-3 py-1.5 text-xs" data-status="open">
+      {% trans "Open" %} <span class="status-count ml-1 hidden" data-for="open"></span>
+    </button>
+    <button type="button" class="status-tab vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input" data-status="in_progress">
+      {% trans "In Progress" %} <span class="status-count ml-1 hidden" data-for="in_progress"></span>
+    </button>
+    <button type="button" class="status-tab vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input" data-status="on_hold">
+      {% trans "On Hold" %} <span class="status-count ml-1 hidden" data-for="on_hold"></span>
+    </button>
+    <button type="button" class="status-tab vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input" data-status="done">
+      {% trans "Done" %} <span class="status-count ml-1 hidden" data-for="done"></span>
+    </button>
+    <button type="button" class="status-tab vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input" data-status="cancelled">
+      {% trans "Cancelled" %} <span class="status-count ml-1 hidden" data-for="cancelled"></span>
+    </button>
+  </div>
+
+  {# --- Bulk actions bar (hidden until items selected) --- #}
+  <div id="bulk-bar" class="hidden items-center gap-2 flex-wrap p-2 rounded-lg bg-accent/5 border border-accent/20">
+    <span id="bulk-count" class="text-xs text-muted-foreground font-medium"></span>
+    <div class="flex items-center gap-2 ml-auto">
+      <select id="bulk-status-select"
+              class="vd-input text-xs py-1 px-2 h-auto">
+        <option value="">{% trans "Set status..." %}</option>
+        <option value="open">{% trans "Open" %}</option>
+        <option value="in_progress">{% trans "In Progress" %}</option>
+        <option value="on_hold">{% trans "On Hold" %}</option>
+        <option value="done">{% trans "Done" %}</option>
+        <option value="cancelled">{% trans "Cancelled" %}</option>
+      </select>
+      <select id="bulk-priority-select"
+              class="vd-input text-xs py-1 px-2 h-auto">
+        <option value="">{% trans "Set priority..." %}</option>
+        <option value="1">{% trans "1 – Lowest" %}</option>
+        <option value="2">{% trans "2 – Low" %}</option>
+        <option value="3">{% trans "3 – Medium" %}</option>
+        <option value="4">{% trans "4 – High" %}</option>
+        <option value="5">{% trans "5 – Urgent" %}</option>
+      </select>
+      <button type="button" id="bulk-delete-btn"
+              class="vd-btn vd-btn-ghost px-2 py-1 text-xs text-destructive border border-destructive/30 hover:bg-destructive/10">
+        {% trans "Delete" %}
+      </button>
+    </div>
+  </div>
+
+  {# --- Loading state --- #}
+  <div id="loading-state" class="hidden flex justify-center py-12">
+    <div class="vd-spinner h-8 w-8 border-[3px]"></div>
+  </div>
+
+  {# --- Empty state --- #}
+  <div id="empty-state" class="hidden text-center py-12">
+    <div class="flex items-center justify-center h-16 w-16 rounded-2xl bg-muted mx-auto mb-4">
+      <svg class="h-8 w-8 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+      </svg>
+    </div>
+    <p class="text-muted-foreground text-sm">{% trans "No tasks yet. Add your first task!" %}</p>
+  </div>
+
+  {# --- Error state --- #}
+  <div id="error-state" class="hidden text-center py-12">
+    <p class="text-destructive text-sm">{% trans "Failed to load tasks. Please refresh." %}</p>
+  </div>
+
+  {# --- Todo list --- #}
+  <ul id="todos-list" class="space-y-2"></ul>
+
+  {# --- Pagination --- #}
+  <div id="pagination" class="hidden flex items-center justify-center gap-3 pt-2">
+    <button type="button" id="prev-page-btn"
+            class="vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input disabled:opacity-40">
+      &#8592; {% trans "Prev" %}
+    </button>
+    <span id="page-info" class="text-xs text-muted-foreground"></span>
+    <button type="button" id="next-page-btn"
+            class="vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input disabled:opacity-40">
+      {% trans "Next" %} &#8594;
+    </button>
+  </div>
+
+</div>
+
+{# --- Create / Edit modal --- #}
+<dialog id="task-modal"
+        class="w-full max-w-lg rounded-xl bg-background border border-border p-0 shadow-xl backdrop:bg-black/50">
+  <div class="flex items-center justify-between px-5 py-4 border-b border-border">
+    <h2 id="modal-title" class="text-base font-semibold text-foreground">{% trans "New Task" %}</h2>
+    <button type="button" id="modal-close-btn"
+            class="vd-btn vd-btn-ghost p-1.5 text-muted-foreground hover:text-foreground">
+      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+      </svg>
+    </button>
+  </div>
+  <form id="task-form" class="px-5 py-4 space-y-4">
+    <div>
+      <label class="block text-xs font-medium text-muted-foreground mb-1" for="field-text">
+        {% trans "Task" %} <span class="text-destructive">*</span>
+      </label>
+      <textarea id="field-text" name="text" rows="2"
+                class="vd-input w-full resize-none"
+                placeholder="{% trans 'What needs to be done?' %}"
+                required></textarea>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-muted-foreground mb-1" for="field-description">
+        {% trans "Description" %}
+      </label>
+      <textarea id="field-description" name="description" rows="2"
+                class="vd-input w-full resize-none"
+                placeholder="{% trans 'Optional details...' %}"></textarea>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-muted-foreground mb-1" for="field-status">
+        {% trans "Status" %}
+      </label>
+      <select id="field-status" name="completion_status" class="vd-input w-full">
+        <option value="open">{% trans "Open" %}</option>
+        <option value="in_progress">{% trans "In Progress" %}</option>
+        <option value="on_hold">{% trans "On Hold" %}</option>
+        <option value="done">{% trans "Done" %}</option>
+        <option value="cancelled">{% trans "Cancelled" %}</option>
+      </select>
+    </div>
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="block text-xs font-medium text-muted-foreground mb-2">{% trans "Priority" %}</label>
+        {# Rendered by todos.js #}
+        <div id="priority-radios" class="flex gap-1.5 flex-wrap"></div>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-muted-foreground mb-1" for="field-due-date">
+          {% trans "Due Date" %}
+        </label>
+        <input type="date" id="field-due-date" name="due_date"
+               class="vd-input w-full">
+      </div>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-muted-foreground mb-1" for="field-topic">
+        {% trans "Topic" %}
+      </label>
+      <input type="text" id="field-topic" name="topic"
+             class="vd-input w-full"
+             placeholder="{% trans 'e.g. health, work, personal' %}">
+    </div>
+    <div class="flex items-center gap-3 pt-2">
+      <button type="button" id="modal-delete-btn"
+              class="vd-btn vd-btn-ghost px-4 py-2 text-sm text-destructive border border-destructive/30 hover:bg-destructive/10 hidden mr-auto">
+        {% trans "Delete" %}
+      </button>
+      <button type="button" id="modal-cancel-btn"
+              class="vd-btn vd-btn-ghost px-4 py-2 text-sm border border-input ml-auto">
+        {% trans "Cancel" %}
+      </button>
+      <button type="submit" id="modal-save-btn"
+              class="vd-btn vd-btn-accent px-4 py-2 text-sm">
+        {% trans "Save" %}
+      </button>
+    </div>
+  </form>
+</dialog>
+
+{# --- Record Detail modal --- #}
+<dialog id="record-modal"
+        class="w-full max-w-xl rounded-xl bg-background border border-border p-0 shadow-xl backdrop:bg-black/50">
+  <div class="flex items-start justify-between px-5 py-4 border-b border-border">
+    <div class="flex-1 min-w-0 pr-4">
+      <h2 id="record-modal-title" class="text-base font-semibold text-foreground truncate"></h2>
+      <p id="record-modal-context" class="text-xs text-muted-foreground mt-0.5 line-clamp-2 hidden"></p>
+    </div>
+    <button type="button" id="record-modal-close-btn"
+            class="vd-btn vd-btn-ghost p-1.5 text-muted-foreground hover:text-foreground flex-shrink-0">
+      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+      </svg>
+    </button>
+  </div>
+  <div class="px-5 py-3 border-b border-border">
+    <div id="record-modal-summary" class="flex flex-wrap gap-1.5"></div>
+  </div>
+  <ul id="record-modal-items"
+      class="divide-y divide-border max-h-[60vh] overflow-y-auto"></ul>
+  <div class="flex justify-between px-5 py-3 border-t border-border">
+    <button type="button" id="record-modal-delete-btn"
+            class="vd-btn vd-btn-ghost px-4 py-2 text-sm text-destructive border border-destructive/30 hover:bg-destructive/10">
+      {% trans "Delete list" %}
+    </button>
+    <button type="button" id="record-modal-done-btn"
+            class="vd-btn vd-btn-ghost px-4 py-2 text-sm border border-input">
+      {% trans "Close" %}
+    </button>
+  </div>
+</dialog>
+
+{{ todos_i18n|json_script:"todos-i18n" }}
+<script>
+  window.TODOS_URLS = {
+    list:   "{% url 'managed_lists:api_todos_list' %}",
+    create: "{% url 'managed_lists:api_todo_create' %}",
+    bulk:   "{% url 'managed_lists:api_todos_bulk' %}",
+    item:   "{% url 'managed_lists:api_todo_item' item_id='00000000-0000-0000-0000-000000000000' %}".replace('00000000-0000-0000-0000-000000000000', '{id}'),
+    record: "{% url 'managed_lists:api_todo_record' record_id='00000000-0000-0000-0000-000000000000' %}".replace('00000000-0000-0000-0000-000000000000', '{id}'),
+  };
+</script>
+<script src="{% static 'managed_lists/js/todos.js' %}"></script>
+{% endblock %}

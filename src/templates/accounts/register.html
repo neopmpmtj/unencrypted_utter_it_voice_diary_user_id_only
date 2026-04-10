@@ -1,0 +1,86 @@
+{% extends "base_auth.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Create Account" %} - VoiceDiary{% endblock %}
+
+{% block auth_title %}{% trans "Create your account" %}{% endblock %}
+{% block auth_subtitle %}{% trans "Start capturing your thoughts today" %}{% endblock %}
+
+{% block auth_content %}
+{% if form.non_field_errors %}
+<div class="rounded-lg bg-destructive/10 border border-destructive/20 p-3 mb-4">
+  {% for error in form.non_field_errors %}
+  <p class="text-sm text-destructive">{{ error }}</p>
+  {% endfor %}
+</div>
+{% endif %}
+
+<p class="text-xs text-muted-foreground mb-3">{% trans "For the best experience (Drive, Calendar), we recommend signing up with Google." %}</p>
+{% comment %}Google sign-up button (above email/password){% endcomment %}
+<a href="{% url 'accounts:google_login' %}"
+   class="vd-btn vd-btn-ghost w-full py-2.5 text-sm border border-input gap-2">
+  <svg class="h-4 w-4" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+  {% trans "Continue with Google" %}
+</a>
+<div class="relative my-4">
+  <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-border"></div></div>
+  <div class="relative flex justify-center text-xs"><span class="bg-card px-2 text-muted-foreground">{% trans "or" %}</span></div>
+</div>
+<form method="post" novalidate class="space-y-4">
+  {% csrf_token %}
+
+  <div class="space-y-1.5">
+    <label for="id_email" class="block text-sm font-medium text-foreground">{% trans "Email" %}</label>
+    <input type="email" id="id_email" name="email" value="{{ form.email.value|default:'' }}"
+           required autocomplete="email" autofocus
+           class="vd-input {% if form.email.errors %}border-destructive{% endif %}"
+           placeholder="{% trans 'you@example.com' %}">
+    {% for error in form.email.errors %}<p class="text-xs text-destructive">{{ error }}</p>{% endfor %}
+  </div>
+
+  <div class="grid grid-cols-2 gap-3">
+    <div class="space-y-1.5">
+      <label for="id_first_name" class="block text-sm font-medium text-foreground">{% trans "First name" %}</label>
+      <input type="text" id="id_first_name" name="first_name" value="{{ form.first_name.value|default:'' }}"
+             autocomplete="given-name"
+             class="vd-input {% if form.first_name.errors %}border-destructive{% endif %}">
+      {% for error in form.first_name.errors %}<p class="text-xs text-destructive">{{ error }}</p>{% endfor %}
+    </div>
+    <div class="space-y-1.5">
+      <label for="id_last_name" class="block text-sm font-medium text-foreground">{% trans "Last name" %}</label>
+      <input type="text" id="id_last_name" name="last_name" value="{{ form.last_name.value|default:'' }}"
+             autocomplete="family-name"
+             class="vd-input {% if form.last_name.errors %}border-destructive{% endif %}">
+      {% for error in form.last_name.errors %}<p class="text-xs text-destructive">{{ error }}</p>{% endfor %}
+    </div>
+  </div>
+
+  <div class="space-y-1.5">
+    <label for="id_password1" class="block text-sm font-medium text-foreground">{% trans "Password" %}</label>
+    <input type="password" id="id_password1" name="password1" required autocomplete="new-password"
+           class="vd-input {% if form.password1.errors %}border-destructive{% endif %}">
+    {% for error in form.password1.errors %}<p class="text-xs text-destructive">{{ error }}</p>{% endfor %}
+  </div>
+
+  <div class="space-y-1.5">
+    <label for="id_password2" class="block text-sm font-medium text-foreground">{% trans "Confirm password" %}</label>
+    <input type="password" id="id_password2" name="password2" required autocomplete="new-password"
+           class="vd-input {% if form.password2.errors %}border-destructive{% endif %}">
+    {% for error in form.password2.errors %}<p class="text-xs text-destructive">{{ error }}</p>{% endfor %}
+  </div>
+
+  <p class="text-xs text-muted-foreground">
+    {% trans "By creating an account you agree to our" %}
+    <a href="{% url 'core:terms' %}" class="text-accent hover:underline">{% trans "Terms of Service" %}</a>.
+  </p>
+
+  <button type="submit" class="vd-btn vd-btn-accent w-full py-2.5 text-sm">
+    {% trans "Create Account" %}
+  </button>
+</form>
+{% endblock %}
+
+{% block auth_footer %}
+{% trans "Already have an account?" %}
+<a href="{% url 'accounts:login' %}" class="text-accent hover:underline font-medium">{% trans "Sign in" %}</a>
+{% endblock %}

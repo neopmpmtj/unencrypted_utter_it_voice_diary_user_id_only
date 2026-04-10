@@ -1,0 +1,15 @@
+{% extends "base_auth.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Account Deletion Requested" %} - VoiceDiary{% endblock %}
+
+{% block auth_title %}{% trans "Account deletion requested" %}{% endblock %}
+{% block auth_subtitle %}
+  {% blocktrans with retention=retention_days grace=grace_days %}Your account has been scheduled for deletion. Your data will be retained for {{ retention }} days before permanent deletion. Check your email to cancel within {{ grace }} days.{% endblocktrans %}
+{% endblock %}
+
+{% block auth_content %}
+<a href="{% url 'core:home' %}" class="vd-btn vd-btn-ghost w-full py-2.5 text-sm text-center block border border-input">
+  {% trans "Return to Home" %}
+</a>
+{% endblock %}

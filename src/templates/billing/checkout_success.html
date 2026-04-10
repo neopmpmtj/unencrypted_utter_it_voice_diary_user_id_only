@@ -1,0 +1,34 @@
+{% extends "base_dashboard.html" %}
+{% load static i18n %}
+
+{% block title %}{% trans "Subscription Confirmed" %} - VoiceDiary{% endblock %}
+{% block page_title %}{% trans "Subscription Confirmed" %}{% endblock %}
+
+{% block dashboard_content %}
+<div class="flex flex-col items-center justify-center py-12 space-y-6 animate-fade-in text-center">
+
+  {# Success icon #}
+  <div class="flex items-center justify-center h-16 w-16 rounded-full bg-accent/10 text-accent">
+    <svg class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+    </svg>
+  </div>
+
+  <div class="space-y-2 max-w-sm">
+    <h2 class="text-xl font-semibold text-foreground">{% trans "You're all set!" %}</h2>
+    <p class="text-sm text-muted-foreground">
+      {% trans "Your subscription is being activated. It may take a moment to reflect on your account." %}
+    </p>
+  </div>
+
+  <div class="flex flex-col sm:flex-row items-center gap-3">
+    <a href="{% url 'billing:subscription' %}" class="vd-btn vd-btn-accent text-sm px-5 py-2.5">
+      {% trans "View Subscription" %}
+    </a>
+    <a href="{% url 'core:home' %}" class="vd-btn vd-btn-ghost border border-input text-sm px-5 py-2.5">
+      {% trans "Back to Dashboard" %}
+    </a>
+  </div>
+
+</div>
+{% endblock %}

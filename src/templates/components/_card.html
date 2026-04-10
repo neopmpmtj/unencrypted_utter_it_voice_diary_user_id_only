@@ -1,0 +1,26 @@
+{% comment %}
+Card container component.
+
+Usage:
+  {% include "components/_card.html" with title="Section Title" %}
+    <p>Card body content</p>
+  {% endinclude %}
+
+  -- OR inline via block override (card is simple enough to just use classes) --
+  <div class="vd-card p-6">...</div>
+
+Variables:
+  title   : Optional card header title
+  classes : Extra CSS classes
+{% endcomment %}
+
+<div class="vd-card {{ classes }}">
+  {% if title %}
+  <div class="px-6 py-4 border-b border-border">
+    <h3 class="text-base font-semibold text-foreground">{{ title }}</h3>
+  </div>
+  {% endif %}
+  <div class="p-6">
+    {{ content }}
+  </div>
+</div>

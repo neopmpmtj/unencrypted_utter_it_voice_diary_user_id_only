@@ -1,0 +1,49 @@
+{% extends "base_dashboard.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Delete Account" %} - VoiceDiary{% endblock %}
+{% block page_title %}{% trans "Delete Account" %}{% endblock %}
+
+{% block dashboard_content %}
+<div class="max-w-md mx-auto animate-fade-in">
+  <div class="vd-card p-6 border-destructive/30">
+    <div class="flex items-center gap-3 mb-4">
+      <div class="flex items-center justify-center h-10 w-10 rounded-lg bg-destructive/10 text-destructive shrink-0">
+        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
+        </svg>
+      </div>
+      <div>
+        <h2 class="text-base font-semibold text-destructive">{% trans "This action cannot be undone" %}</h2>
+        <p class="text-xs text-muted-foreground">
+          {% blocktrans with days=retention_days %}Your data will be retained for {{ days }} days before permanent deletion.{% endblocktrans %}
+        </p>
+      </div>
+    </div>
+
+    {% if form.non_field_errors %}
+    <div class="rounded-lg bg-destructive/10 border border-destructive/20 p-3 mb-4">
+      {% for error in form.non_field_errors %}<p class="text-sm text-destructive">{{ error }}</p>{% endfor %}
+    </div>
+    {% endif %}
+
+    <form method="post" novalidate class="space-y-4">
+      {% csrf_token %}
+
+      <div class="space-y-1.5">
+        <label for="id_confirmation_email" class="block text-sm font-medium text-foreground">{% trans "Type your email to confirm" %}</label>
+        <p class="text-xs text-muted-foreground">{% blocktrans with email=masked_email %}To confirm, type your email (e.g. {{ email }}):{% endblocktrans %}</p>
+        <input type="email" id="id_confirmation_email" name="confirmation_email" required autocomplete="email"
+               class="vd-input {% if form.confirmation_email.errors %}border-destructive{% endif %}"
+               placeholder="{% trans 'you@example.com' %}">
+        {% for e in form.confirmation_email.errors %}<p class="text-xs text-destructive">{{ e }}</p>{% endfor %}
+      </div>
+
+      <div class="flex gap-3">
+        <button type="submit" class="vd-btn vd-btn-destructive px-4 py-2 text-sm">{% trans "Delete My Account" %}</button>
+        <a href="{% url 'accounts:profile' %}" class="vd-btn vd-btn-ghost px-4 py-2 text-sm border border-input">{% trans "Cancel" %}</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

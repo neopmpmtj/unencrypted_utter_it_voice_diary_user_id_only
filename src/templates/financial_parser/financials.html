@@ -1,0 +1,252 @@
+{% extends "base_dashboard.html" %}
+{% load static i18n %}
+
+{% block title %}{% trans "Financial Entries" %} - VoiceDiary{% endblock %}
+{% block page_title %}{% trans "Financial Entries" %}{% endblock %}
+
+{% block dashboard_top_right %}
+<button type="button" id="add-entry-btn"
+        class="vd-btn vd-btn-accent px-3 py-1.5 text-sm gap-1.5">
+  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+  </svg>
+  <span class="hidden sm:inline">{% trans "Add Entry" %}</span>
+</button>
+{% endblock %}
+
+{% block dashboard_content %}
+<div class="space-y-4 animate-fade-in" id="financials-root">
+
+  {# --- Type filter tabs --- #}
+  <div class="flex flex-wrap gap-1.5" id="type-tabs">
+    <button type="button" class="type-tab vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input" data-type="all">
+      {% trans "All" %}
+    </button>
+    <button type="button" class="type-tab vd-btn vd-btn-accent px-3 py-1.5 text-xs" data-type="expense">
+      {% trans "Expenses" %}
+    </button>
+    <button type="button" class="type-tab vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input" data-type="income">
+      {% trans "Income" %}
+    </button>
+  </div>
+
+  {# --- Loading state --- #}
+  <div id="loading-state" class="hidden flex justify-center py-12">
+    <div class="vd-spinner h-8 w-8 border-[3px]"></div>
+  </div>
+
+  {# --- Empty state --- #}
+  <div id="empty-state" class="hidden text-center py-12">
+    <div class="flex items-center justify-center h-16 w-16 rounded-2xl bg-muted mx-auto mb-4">
+      <svg class="h-8 w-8 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+    </div>
+    <p class="text-muted-foreground text-sm">{% trans "No financial entries yet. Add your first entry!" %}</p>
+  </div>
+
+  {# --- Error state --- #}
+  <div id="error-state" class="hidden text-center py-12">
+    <p class="text-destructive text-sm">{% trans "Failed to load entries. Please refresh." %}</p>
+  </div>
+
+  {# --- Entries container --- #}
+  <ul id="financials-list" class="space-y-2"></ul>
+
+  {# --- Pagination --- #}
+  <div id="pagination" class="hidden flex items-center justify-center gap-3 pt-2">
+    <button type="button" id="prev-page-btn"
+            class="vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input disabled:opacity-40">
+      &#8592; {% trans "Prev" %}
+    </button>
+    <span id="page-info" class="text-xs text-muted-foreground"></span>
+    <button type="button" id="next-page-btn"
+            class="vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input disabled:opacity-40">
+      {% trans "Next" %} &#8594;
+    </button>
+  </div>
+
+</div>
+
+{# --- Create Entry modal --- #}
+<dialog id="create-modal"
+        class="w-full max-w-lg rounded-xl bg-background border border-border p-0 shadow-xl backdrop:bg-black/50">
+  <div class="flex items-center justify-between px-5 py-4 border-b border-border">
+    <h2 class="text-base font-semibold text-foreground">{% trans "New Financial Entry" %}</h2>
+    <button type="button" id="create-modal-close-btn"
+            class="vd-btn vd-btn-ghost p-1.5 text-muted-foreground hover:text-foreground">
+      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+      </svg>
+    </button>
+  </div>
+  <form id="create-form" class="px-5 py-4 space-y-4">
+    <div>
+      <label class="block text-xs font-medium text-muted-foreground mb-1" for="create-name">
+        {% trans "Entry name" %} <span class="text-destructive">*</span>
+      </label>
+      <input type="text" id="create-name" class="vd-input w-full"
+             placeholder="{% trans 'e.g. Groceries, January expenses...' %}" required>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-muted-foreground mb-1" for="create-context">
+        {% trans "Context" %}
+      </label>
+      <input type="text" id="create-context" class="vd-input w-full"
+             placeholder="{% trans 'Optional occasion or note...' %}">
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-muted-foreground mb-2">
+        {% trans "Items" %}
+      </label>
+      <div id="create-items-container" class="space-y-2"></div>
+      <button type="button" id="add-item-row-btn"
+              class="mt-2 vd-btn vd-btn-ghost px-3 py-1.5 text-xs border border-input">
+        + {% trans "Add row" %}
+      </button>
+    </div>
+    <div class="flex items-center gap-3 pt-2">
+      <button type="button" id="create-modal-cancel-btn"
+              class="vd-btn vd-btn-ghost px-4 py-2 text-sm border border-input ml-auto">
+        {% trans "Cancel" %}
+      </button>
+      <button type="submit" id="create-modal-save-btn"
+              class="vd-btn vd-btn-accent px-4 py-2 text-sm">
+        {% trans "Save" %}
+      </button>
+    </div>
+  </form>
+</dialog>
+
+{# --- Record detail modal --- #}
+<dialog id="record-modal"
+        class="w-full max-w-xl rounded-xl bg-background border border-border p-0 shadow-xl backdrop:bg-black/50">
+  <div class="flex items-start justify-between px-5 py-4 border-b border-border">
+    <div class="flex-1 min-w-0 pr-4">
+      <input type="text" id="record-modal-name"
+             class="vd-input w-full text-base font-semibold bg-transparent border-transparent focus:border-border px-0"
+             placeholder="{% trans 'Entry name' %}">
+      <input type="text" id="record-modal-context"
+             class="vd-input w-full text-xs text-muted-foreground bg-transparent border-transparent focus:border-border px-0 mt-0.5"
+             placeholder="{% trans 'Context (optional)' %}">
+    </div>
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <button type="button" id="record-modal-save-meta-btn"
+              class="vd-btn vd-btn-ghost px-2 py-1 text-xs border border-input hidden">
+        {% trans "Save" %}
+      </button>
+      <button type="button" id="record-modal-delete-btn"
+              class="vd-btn vd-btn-ghost px-2 py-1 text-xs text-destructive border border-destructive/30 hover:bg-destructive/10">
+        {% trans "Delete entry" %}
+      </button>
+      <button type="button" id="record-modal-close-btn"
+              class="vd-btn vd-btn-ghost p-1.5 text-muted-foreground hover:text-foreground">
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+  <div id="record-modal-summary" class="px-5 py-2 border-b border-border flex gap-4 text-xs text-muted-foreground"></div>
+  <ul id="record-modal-items" class="divide-y divide-border max-h-[50vh] overflow-y-auto"></ul>
+  <div class="px-5 py-3 border-t border-border">
+    <div class="grid grid-cols-4 gap-2">
+      <select id="record-modal-new-type" class="vd-input text-sm col-span-1">
+        <option value="expense">{% trans "Expense" %}</option>
+        <option value="income">{% trans "Income" %}</option>
+      </select>
+      <input type="number" step="any" id="record-modal-new-amount" class="vd-input text-sm col-span-1"
+             placeholder="{% trans 'Amount' %}">
+      <input type="text" id="record-modal-new-currency" class="vd-input text-sm col-span-1"
+             placeholder="{% trans 'Currency' %}" value="EUR">
+      <button type="button" id="record-modal-add-item-btn"
+              class="vd-btn vd-btn-accent px-3 py-1.5 text-sm col-span-1">
+        {% trans "Add" %}
+      </button>
+    </div>
+  </div>
+</dialog>
+
+{# --- Item edit modal --- #}
+<dialog id="item-modal"
+        class="w-full max-w-md rounded-xl bg-background border border-border p-0 shadow-xl backdrop:bg-black/50">
+  <div class="flex items-center justify-between px-5 py-4 border-b border-border">
+    <h2 class="text-base font-semibold text-foreground">{% trans "Edit Item" %}</h2>
+    <button type="button" id="item-modal-close-btn"
+            class="vd-btn vd-btn-ghost p-1.5 text-muted-foreground hover:text-foreground">
+      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+      </svg>
+    </button>
+  </div>
+  <form id="item-form" class="px-5 py-4 space-y-3">
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="block text-xs font-medium text-muted-foreground mb-1">{% trans "Type" %}</label>
+        <select id="item-field-type" class="vd-input w-full">
+          <option value="expense">{% trans "Expense" %}</option>
+          <option value="income">{% trans "Income" %}</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-muted-foreground mb-1">{% trans "Amount" %} <span class="text-destructive">*</span></label>
+        <input type="number" step="any" id="item-field-amount" class="vd-input w-full" required>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="block text-xs font-medium text-muted-foreground mb-1">{% trans "Currency" %}</label>
+        <input type="text" id="item-field-currency" class="vd-input w-full" placeholder="EUR">
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-muted-foreground mb-1">{% trans "Date" %}</label>
+        <input type="date" id="item-field-date" class="vd-input w-full">
+      </div>
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="block text-xs font-medium text-muted-foreground mb-1">{% trans "Category" %}</label>
+        <input type="text" id="item-field-category" class="vd-input w-full">
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-muted-foreground mb-1">{% trans "Merchant" %}</label>
+        <input type="text" id="item-field-merchant" class="vd-input w-full">
+      </div>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-muted-foreground mb-1">{% trans "Payment method" %}</label>
+      <input type="text" id="item-field-payment-method" class="vd-input w-full" placeholder="{% trans 'e.g. credit card, cash' %}">
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-muted-foreground mb-1">{% trans "Description" %}</label>
+      <textarea id="item-field-description" rows="2" class="vd-input w-full resize-none"></textarea>
+    </div>
+    <div class="flex items-center gap-3 pt-2">
+      <button type="button" id="item-modal-delete-btn"
+              class="vd-btn vd-btn-ghost px-4 py-2 text-sm text-destructive border border-destructive/30 hover:bg-destructive/10 mr-auto">
+        {% trans "Delete" %}
+      </button>
+      <button type="button" id="item-modal-cancel-btn"
+              class="vd-btn vd-btn-ghost px-4 py-2 text-sm border border-input">
+        {% trans "Cancel" %}
+      </button>
+      <button type="submit" id="item-modal-save-btn"
+              class="vd-btn vd-btn-accent px-4 py-2 text-sm">
+        {% trans "Save" %}
+      </button>
+    </div>
+  </form>
+</dialog>
+
+{{ financials_i18n|json_script:"financials-i18n" }}
+<script>
+  window.FINANCIALS_URLS = {
+    list:       "{% url 'financial_parser:api_financials_list' %}",
+    create:     "{% url 'financial_parser:api_financial_create' %}",
+    record:     "{% url 'financial_parser:api_financial_record' record_id='00000000-0000-0000-0000-000000000000' %}".replace('00000000-0000-0000-0000-000000000000', '{id}'),
+    item:       "{% url 'financial_parser:api_financial_item' item_id='00000000-0000-0000-0000-000000000000' %}".replace('00000000-0000-0000-0000-000000000000', '{id}'),
+    items_add:  "{% url 'financial_parser:api_financial_items_add' record_id='00000000-0000-0000-0000-000000000000' %}".replace('00000000-0000-0000-0000-000000000000', '{id}'),
+  };
+</script>
+<script src="{% static 'financial_parser/js/financials.js' %}"></script>
+{% endblock %}

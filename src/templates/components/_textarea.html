@@ -1,0 +1,28 @@
+{% comment %}
+Textarea component.
+
+Usage:
+  {% include "components/_textarea.html" with id="mainText" placeholder="Type your note..." rows="6" %}
+
+Variables:
+  id          : HTML id
+  name        : Form field name
+  placeholder : Placeholder text
+  rows        : Number of rows (default: 4)
+  value       : Initial value
+  required    : If truthy, field is required
+  disabled    : If truthy, field is disabled
+  classes     : Extra CSS classes
+  autofocus   : If truthy, field gets focus on load
+{% endcomment %}
+
+<textarea
+  {% if id %}id="{{ id }}"{% endif %}
+  {% if name %}name="{{ name }}"{% endif %}
+  {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}
+  rows="{{ rows|default:'4' }}"
+  {% if required %}required{% endif %}
+  {% if disabled %}disabled{% endif %}
+  {% if autofocus %}autofocus{% endif %}
+  class="vd-textarea {{ classes }}"
+>{{ value }}</textarea>

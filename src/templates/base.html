@@ -1,0 +1,78 @@
+{% load static i18n %}
+{% get_current_language as LANGUAGE_CODE %}
+<!DOCTYPE html>
+<html lang="{{ LANGUAGE_CODE|default:'en' }}"
+      class="{% if dark_mode == 'true' %}dark {% endif %}theme-{{ accent_theme|default:'green' }}"
+      data-dark-mode="{{ dark_mode|default:'false' }}"
+      data-accent-theme="{{ accent_theme|default:'green' }}"
+      data-transcription-size="{{ transcription_text_size|default:'small' }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}VoiceDiary{% endblock %}</title>
+
+  <!-- Prevent FOUC: apply theme before paint -->
+  <script>
+    (function(){
+      var d=localStorage.getItem('vd-dark-mode');
+      if(d==='1')document.documentElement.classList.add('dark');
+      else if(d==='0')document.documentElement.classList.remove('dark');
+      var a=localStorage.getItem('vd-accent-theme');
+      if(a){
+        ['green','blue','indigo','purple','red','orange','yellow'].forEach(function(c){
+          document.documentElement.classList.remove('theme-'+c);
+        });
+        document.documentElement.classList.add('theme-'+a);
+      }
+      var s=localStorage.getItem('vd-transcription-size');
+      if(s&&['small','medium','large'].indexOf(s)!==-1){
+        document.documentElement.setAttribute('data-transcription-size',s);
+      }
+    })();
+  </script>
+
+  <!-- Tailwind CSS (compiled by django-tailwind-cli) -->
+  {% load tailwind_cli %}
+  {% tailwind_css %}
+
+  <!-- Inter font (optional CDN, gracefully degrades to system fonts) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  {% block extra_css %}{% endblock %}
+  {% block extra_head %}{% endblock %}
+</head>
+
+<body class="min-h-screen bg-background text-foreground font-sans antialiased flex flex-col">
+
+  {% block top_bar %}{% endblock %}
+
+  {% include "components/_gigo_banner.html" %}
+
+  <main class="flex-1 flex flex-col">
+    {% block content %}{% endblock %}
+  </main>
+
+  {% block footer %}
+  <footer class="border-t border-border py-4 mt-auto">
+    <div class="text-center text-xs text-muted-foreground">
+      {% trans "© 2026 VoiceDiary" %}
+      <a href="{% url 'core:terms' %}" class="text-accent hover:underline ml-1">{% trans "Terms and Conditions" %}</a>
+    </div>
+  </footer>
+  {% endblock %}
+
+  <!-- Toast notifications -->
+  {% include "components/_toast.html" %}
+
+  <!-- Theme manager -->
+  <script src="{% static 'js/theme.js' %}"></script>
+
+  {% block extra_js %}{% endblock %}
+
+  {% if request.user.is_authenticated %}
+  {% csrf_token %}
+  {% endif %}
+</body>
+</html>

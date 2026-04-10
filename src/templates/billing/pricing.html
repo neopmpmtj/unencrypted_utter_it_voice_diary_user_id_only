@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% load static i18n %}
+
+{% block title %}{% trans "Pricing" %} - VoiceDiary{% endblock %}
+
+{% block content %}
+<header class="sticky top-0 z-40 bg-background/80 backdrop-blur-sm border-b border-border">
+  <div class="flex items-center justify-between px-4 py-3 max-w-3xl mx-auto">
+    {% if user.is_authenticated %}
+    <a href="{% url 'core:home' %}" class="vd-btn vd-btn-ghost px-2 py-1.5 text-sm gap-1.5">
+      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+      </svg>
+      <span class="hidden sm:inline">{% trans "Back" %}</span>
+    </a>
+    {% else %}
+    <a href="{% url 'core:home' %}" class="vd-btn vd-btn-ghost px-2 py-1.5 text-sm gap-1.5">VoiceDiary</a>
+    {% endif %}
+    <h1 class="text-base font-semibold text-foreground">{% trans "Plans & Pricing" %}</h1>
+    <div class="w-16"></div>
+  </div>
+</header>
+
+<div class="max-w-3xl mx-auto px-4 py-8 space-y-8 animate-fade-in">
+
+  <div class="text-center space-y-2">
+    <p class="text-muted-foreground text-sm">
+      {% blocktrans with days=trial_days %}{{ days }}-day free trial — cancel before it ends and you won't be charged.{% endblocktrans %}
+    </p>
+  </div>
+
+  {# --- Pricing cards --- #}
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+
+    {# Free #}
+    <div class="vd-card p-5 flex flex-col gap-3">
+      <div>
+        <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{% trans "Free" %}</p>
+        <p class="text-2xl font-bold text-foreground mt-1">$0</p>
+        <p class="text-xs text-muted-foreground">{% trans "per month" %}</p>
+      </div>
+      <ul class="text-sm text-muted-foreground space-y-1.5 flex-1">
+        <li>&#10003; {% trans "3 min recording / day" %}</li>
+        <li>&#10003; {% trans "10 chat queries / day" %}</li>
+        <li>&#10003; {% trans "3 rewrites / day" %}</li>
+        <li>&#10003; {% trans "AI transcription" %}</li>
+      </ul>
+      {% if user.is_authenticated and user.tier == 'free' %}
+      <span class="vd-btn vd-btn-ghost border border-input text-center text-sm cursor-default">{% trans "Current plan" %}</span>
+      {% elif not user.is_authenticated %}
+      <a href="{% url 'accounts:register' %}" class="vd-btn vd-btn-ghost border border-input text-center text-sm">{% trans "Get started" %}</a>
+      {% endif %}
+    </div>
+
+    {# Pro #}
+    <div class="vd-card p-5 flex flex-col gap-3 border-accent/50 ring-1 ring-accent/30">
+      <div>
+        <p class="text-xs font-semibold text-accent uppercase tracking-wider">{% trans "Pro" %}</p>
+        <p class="text-2xl font-bold text-foreground mt-1">{% trans "—" %}</p>
+        <p class="text-xs text-muted-foreground">{% trans "per month" %}</p>
+      </div>
+      <ul class="text-sm text-muted-foreground space-y-1.5 flex-1">
+        <li>&#10003; {% trans "5 min recording / day" %}</li>
+        <li>&#10003; {% trans "25 chat queries / day" %}</li>
+        <li>&#10003; {% trans "10 rewrites / day" %}</li>
+        <li>&#10003; {% trans "Batch calendar extraction" %}</li>
+        <li>&#10003; {% trans "Priority support" %}</li>
+      </ul>
+      {% if user.is_authenticated %}
+        {% if user.tier == 'pro' %}
+        <a href="{% url 'billing:subscription' %}" class="vd-btn vd-btn-ghost border border-input text-center text-sm">{% trans "Manage" %}</a>
+        {% elif user.tier == 'ultra' %}
+        <span class="vd-btn vd-btn-ghost border border-input text-center text-sm cursor-default text-muted-foreground">{% trans "Included in Ultra" %}</span>
+        {% else %}
+        <form method="post" action="{% url 'billing:checkout' 'pro' %}">
+          {% csrf_token %}
+          <button type="submit" class="vd-btn vd-btn-accent w-full text-sm">
+            {% blocktrans with days=trial_days %}Start {{ days }}-day trial{% endblocktrans %}
+          </button>
+        </form>
+        {% endif %}
+      {% else %}
+      <a href="{% url 'accounts:register' %}" class="vd-btn vd-btn-accent text-center text-sm">{% trans "Get started" %}</a>
+      {% endif %}
+    </div>
+
+    {# Ultra #}
+    <div class="vd-card p-5 flex flex-col gap-3">
+      <div>
+        <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{% trans "Ultra" %}</p>
+        <p class="text-2xl font-bold text-foreground mt-1">{% trans "—" %}</p>
+        <p class="text-xs text-muted-foreground">{% trans "per month" %}</p>
+      </div>
+      <ul class="text-sm text-muted-foreground space-y-1.5 flex-1">
+        <li>&#10003; {% trans "60 min recording / day" %}</li>
+        <li>&#10003; {% trans "100 chat queries / day" %}</li>
+        <li>&#10003; {% trans "50 rewrites / day" %}</li>
+        <li>&#10003; {% trans "Everything in Pro" %}</li>
+        <li>&#10003; {% trans "20 MB text input / day" %}</li>
+      </ul>
+      {% if user.is_authenticated %}
+        {% if user.tier == 'ultra' %}
+        <a href="{% url 'billing:subscription' %}" class="vd-btn vd-btn-ghost border border-input text-center text-sm">{% trans "Manage" %}</a>
+        {% else %}
+        <form method="post" action="{% url 'billing:checkout' 'ultra' %}">
+          {% csrf_token %}
+          <button type="submit" class="vd-btn vd-btn-ghost border border-input w-full text-sm">
+            {% blocktrans with days=trial_days %}Start {{ days }}-day trial{% endblocktrans %}
+          </button>
+        </form>
+        {% endif %}
+      {% else %}
+      <a href="{% url 'accounts:register' %}" class="vd-btn vd-btn-ghost border border-input text-center text-sm">{% trans "Get started" %}</a>
+      {% endif %}
+    </div>
+
+  </div>
+
+  {# --- Feature comparison note --- #}
+  <p class="text-center text-xs text-muted-foreground">
+    {% trans "All plans include AI transcription, translation, and full diary history. Card required to start trial — cancel before day 14 and pay nothing." %}
+  </p>
+
+</div>
+{% endblock %}

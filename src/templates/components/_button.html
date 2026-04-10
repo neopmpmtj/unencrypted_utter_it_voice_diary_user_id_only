@@ -1,0 +1,33 @@
+{% comment %}
+Button component.
+
+Usage:
+  {% include "components/_button.html" with variant="accent" label="Save" type="submit" %}
+  {% include "components/_button.html" with variant="secondary" label="Cancel" id="cancelBtn" %}
+  {% include "components/_button.html" with variant="destructive" label="Delete" %}
+  {% include "components/_button.html" with variant="ghost" label="Back" %}
+
+Variables:
+  variant  : accent | secondary | destructive | ghost  (default: accent)
+  label    : Button text
+  type     : button | submit | reset  (default: button)
+  id       : Optional HTML id
+  disabled : If truthy, button is disabled
+  classes  : Extra CSS classes
+  icon     : Optional SVG icon HTML (renders before label)
+  size     : sm | md | lg  (default: md)
+{% endcomment %}
+
+{% with btn_variant=variant|default:"accent" btn_type=type|default:"button" btn_size=size|default:"md" %}
+<button
+  type="{{ btn_type }}"
+  {% if id %}id="{{ id }}"{% endif %}
+  {% if disabled %}disabled{% endif %}
+  class="vd-btn vd-btn-{{ btn_variant }}
+    {% if btn_size == 'sm' %}px-3 py-1.5 text-xs{% elif btn_size == 'lg' %}px-6 py-3 text-base{% else %}px-4 py-2.5 text-sm{% endif %}
+    {{ classes }}"
+>
+  {% if icon %}{{ icon }}{% endif %}
+  {{ label }}
+</button>
+{% endwith %}
