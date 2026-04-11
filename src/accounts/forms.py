@@ -462,6 +462,12 @@ class UserPreferencesForm(forms.ModelForm):
         help_text=_('Display elapsed recording time below the record button'),
         widget=forms.CheckboxInput(attrs={'class': 'form-check-input'}),
     )
+    show_inline_rewrite = forms.BooleanField(
+        required=False,
+        label=_('Show rewrite on voice and text input'),
+        help_text=_('When enabled, shows the Rewrite control next to the record button (voice) and next to Save (text).'),
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+    )
     drive_attachment_folder_name = forms.CharField(
         required=False,
         max_length=255,
@@ -479,7 +485,7 @@ class UserPreferencesForm(forms.ModelForm):
 
     class Meta:
         model = UserPreferences
-        fields = ['preferred_language', 'enable_translation', 'standalone_app_ui', 'show_recording_timer', 'drive_attachment_folder_name', 'timezone']
+        fields = ['preferred_language', 'enable_translation', 'standalone_app_ui', 'show_recording_timer', 'show_inline_rewrite', 'drive_attachment_folder_name', 'timezone']
 
     def clean_preferred_language(self):
         value = self.cleaned_data.get('preferred_language', '')

@@ -92,6 +92,35 @@
               placeholder="{% trans 'Edit your transcription...' %}"
               rows="8"></textarea>
     <div class="flex flex-wrap items-center justify-center gap-3">
+      {% if show_inline_rewrite %}
+      <div class="flex flex-wrap items-center gap-2">
+        <select id="voice-edit-rewrite-template-select"
+                class="vd-input py-1.5 px-2 text-sm w-auto min-w-[120px]">
+          {% for tpl in rewrite_templates %}
+          <option value="{{ tpl.name }}"{% if tpl.name == "grammar" %} selected{% endif %}>{{ tpl.label }}</option>
+          {% endfor %}
+        </select>
+        <button type="button" id="voice-edit-rewrite-btn"
+                class="vd-btn vd-btn-ghost px-3 py-1.5 text-sm gap-1.5 border border-accent text-foreground"
+                aria-label="{% trans 'Rewrite text' %}">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+          </svg>
+          <span>{% trans "Rewrite" %}</span>
+        </button>
+        <button type="button" id="voice-edit-undo-rewrite-btn"
+                class="hidden vd-btn vd-btn-ghost px-3 py-1.5 text-sm gap-1.5 border border-accent text-foreground"
+                aria-label="{% trans 'Undo rewrite' %}">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a5 5 0 010 10H9m-6-10l4-4m-4 4l4 4"/>
+          </svg>
+          <span>{% trans "Undo" %}</span>
+        </button>
+        <div id="voice-edit-rewrite-spinner" class="hidden">
+          <div class="vd-spinner h-4 w-4 border-2"></div>
+        </div>
+      </div>
+      {% endif %}
       <div class="flex items-center gap-2">
         <button type="button" id="editModeRecordBtn"
                 class="vd-record-btn vd-record-btn--sm"
@@ -127,7 +156,36 @@
 
   {# --- Recording controls --- #}
   <div id="recordingControlsWrap" class="flex flex-col items-center justify-center gap-2 py-4">
-    <div class="flex items-center justify-center gap-4">
+    <div class="flex items-center justify-center gap-4 flex-wrap">
+    {% if show_inline_rewrite %}
+    <div class="flex flex-wrap items-center gap-2">
+      <select id="voice-main-rewrite-template-select"
+              class="vd-input py-1.5 px-2 text-sm w-auto min-w-[120px]">
+        {% for tpl in rewrite_templates %}
+        <option value="{{ tpl.name }}"{% if tpl.name == "grammar" %} selected{% endif %}>{{ tpl.label }}</option>
+        {% endfor %}
+      </select>
+      <button type="button" id="voice-main-rewrite-btn"
+              class="vd-btn vd-btn-ghost px-3 py-1.5 text-sm gap-1.5 border border-accent text-foreground"
+              aria-label="{% trans 'Rewrite text' %}">
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+        </svg>
+        <span>{% trans "Rewrite" %}</span>
+      </button>
+      <button type="button" id="voice-main-undo-rewrite-btn"
+              class="hidden vd-btn vd-btn-ghost px-3 py-1.5 text-sm gap-1.5 border border-accent text-foreground"
+              aria-label="{% trans 'Undo rewrite' %}">
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a5 5 0 010 10H9m-6-10l4-4m-4 4l4 4"/>
+        </svg>
+        <span>{% trans "Undo" %}</span>
+      </button>
+      <div id="voice-main-rewrite-spinner" class="hidden">
+        <div class="vd-spinner h-4 w-4 border-2"></div>
+      </div>
+    </div>
+    {% endif %}
     {# Primary: Record / Pause / Resume #}
     <button type="button" id="recordBtn"
             class="vd-record-btn"
@@ -186,6 +244,7 @@
   data-swipe-text-url="{% url 'text_input:page' %}"
 ></script>
 <script src="{% static 'js/swipe_nav.js' %}"></script>
+{% if show_inline_rewrite %}<script src="{% static 'js/rewrite_inline.js' %}"></script>{% endif %}
 {{ recorder_config|json_script:"recorder-config" }}
 <script>
 (function() {
@@ -299,6 +358,61 @@
     }
   };
 
+  var quotaRewriteBlocked = false;
+  var voiceMainRewriteCtl = null;
+  var voiceEditRewriteCtl = null;
+
+  function isMainRewriteBlockedByRecorder() {
+    var s = recorder.state;
+    return s === 'recording' || s === 'paused' || s === 'uploading' || s === 'processing';
+  }
+
+  function syncInlineRewriteControls() {
+    if (voiceMainRewriteCtl) voiceMainRewriteCtl.updateEnabled();
+    if (voiceEditRewriteCtl) voiceEditRewriteCtl.updateEnabled();
+  }
+
+  {% if show_inline_rewrite %}
+  var rewriteApiUrl = "{{ rewrite_api_url|escapejs }}";
+  if (typeof window.initRewriteInline === 'function') {
+    voiceMainRewriteCtl = window.initRewriteInline({
+      rewriteUrl: rewriteApiUrl,
+      selectEl: document.getElementById('voice-main-rewrite-template-select'),
+      btnEl: document.getElementById('voice-main-rewrite-btn'),
+      undoBtn: document.getElementById('voice-main-undo-rewrite-btn'),
+      spinnerEl: document.getElementById('voice-main-rewrite-spinner'),
+      getText: function() {
+        if (!transcriptionCard || transcriptionCard.classList.contains('hidden')) return '';
+        return transcriptionCardText ? transcriptionCardText.textContent : '';
+      },
+      setText: function(t) {
+        if (transcriptionPlaceholder) transcriptionPlaceholder.classList.add('hidden');
+        if (transcriptionCard) transcriptionCard.classList.remove('hidden');
+        if (transcriptionCardText) transcriptionCardText.textContent = t || '';
+        lastSessionContent = t || '';
+      },
+      isDisabledExtra: isMainRewriteBlockedByRecorder,
+      onQuotaBlocked: function() { return quotaRewriteBlocked; },
+    });
+    voiceEditRewriteCtl = window.initRewriteInline({
+      rewriteUrl: rewriteApiUrl,
+      selectEl: document.getElementById('voice-edit-rewrite-template-select'),
+      btnEl: document.getElementById('voice-edit-rewrite-btn'),
+      undoBtn: document.getElementById('voice-edit-undo-rewrite-btn'),
+      spinnerEl: document.getElementById('voice-edit-rewrite-spinner'),
+      getText: function() { return editModeTextarea ? editModeTextarea.value : ''; },
+      setText: function(t) { if (editModeTextarea) editModeTextarea.value = t || ''; },
+      isDisabledExtra: function() {
+        return editModeRecordBtn && editModeRecordBtn.classList.contains('edit-recording');
+      },
+      onQuotaBlocked: function() { return quotaRewriteBlocked; },
+    });
+    if (editModeTextarea && voiceEditRewriteCtl) {
+      editModeTextarea.addEventListener('input', function() { voiceEditRewriteCtl.updateEnabled(); });
+    }
+  }
+  {% endif %}
+
   // Icons helper
   function showIcon(name) {
     iconRecord.classList.toggle('hidden', name !== 'record');
@@ -399,6 +513,7 @@
         }
         break;
     }
+    syncInlineRewriteControls();
   };
 
   recorder.onDurationUpdate = showTimer ? function(duration) {
@@ -422,6 +537,7 @@
       session.end();
     }
     updateEditButtonState();
+    syncInlineRewriteControls();
   }
 
   recorder.onContentReady = function(data) {
@@ -452,6 +568,10 @@
     editModeTextarea.focus();
     document.getElementById('recordingControlsWrap').classList.add('hidden');
     updateEditButtonState();
+    if (voiceEditRewriteCtl) {
+      voiceEditRewriteCtl.resetUndo();
+      voiceEditRewriteCtl.updateEnabled();
+    }
   }
 
   function exitEditMode(revertToOriginal) {
@@ -471,6 +591,7 @@
       editModeSaveBtn.disabled = false;
       editModeDismissBtn.disabled = false;
     }
+    syncInlineRewriteControls();
   }
 
   var editRecorder = null;
@@ -498,6 +619,7 @@
         editModeRecordBtn.setAttribute('aria-label', '{% trans "Record" %}');
         editModeSaveBtn.disabled = false;
         editModeDismissBtn.disabled = false;
+        syncInlineRewriteControls();
       };
       editRecorder.onError = function(err) {
         if (window.VDTheme) window.VDTheme.showToast(err.message || '{% trans "Transcription failed" %}', 'error');
@@ -505,6 +627,7 @@
         editModeRecordBtn.setAttribute('aria-label', '{% trans "Record" %}');
         editModeSaveBtn.disabled = false;
         editModeDismissBtn.disabled = false;
+        syncInlineRewriteControls();
       };
       editRecorder.onTranscriptionDiscarded = function(reason) {
         if (window.VDTheme) window.VDTheme.showToast(reason, 'info');
@@ -512,6 +635,7 @@
         editModeRecordBtn.setAttribute('aria-label', '{% trans "Record" %}');
         editModeSaveBtn.disabled = false;
         editModeDismissBtn.disabled = false;
+        syncInlineRewriteControls();
       };
       if (showTimer) {
         editRecorder.onDurationUpdate = function(duration) {
@@ -554,6 +678,7 @@
           transcriptionCard.classList.add('hidden');
           transcriptionPlaceholder.classList.remove('hidden');
         }
+        syncInlineRewriteControls();
       }).catch(function(err) {
         if (window.VDTheme) window.VDTheme.showToast(
           '{% trans "Could not start recording" %}: ' + err.message, 'error');
@@ -640,6 +765,7 @@
       editModeRecordBtn.setAttribute('aria-label', '{% trans "Record" %}');
       editModeSaveBtn.disabled = false;
       editModeDismissBtn.disabled = false;
+      syncInlineRewriteControls();
       return;
     }
     var er = ensureEditRecorder();
@@ -650,12 +776,14 @@
       editModeRecordBtn.setAttribute('aria-label', '{% trans "Stop" %}');
       editModeSaveBtn.disabled = true;
       editModeDismissBtn.disabled = true;
+      syncInlineRewriteControls();
     }).catch(function(err) {
       if (window.VDTheme) window.VDTheme.showToast(err.message || '{% trans "Could not start recording" %}', 'error');
     });
   });
 
   updateEditButtonState();
+  syncInlineRewriteControls();
 
   // ===== Quota Initialization =====
   function applyQuotaUI(quota) {
@@ -669,9 +797,11 @@
     var tok = quota.tokens || {};
     var limit = tok.limit || 0;
     var remain = tok.remaining;
-    if (limit > 0 && remain !== undefined && remain <= 0) {
+    quotaRewriteBlocked = limit > 0 && remain !== undefined && remain <= 0;
+    if (quotaRewriteBlocked) {
       quotaExhausted.classList.remove('hidden');
     }
+    syncInlineRewriteControls();
   }
 
   // Fetch quota on page load and apply it

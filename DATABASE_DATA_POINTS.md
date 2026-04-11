@@ -80,6 +80,7 @@ This document lists all database tables and their fields, organized by module. U
 | accent_theme | str | `green`, `blue`, `indigo`, `purple`, `red`, `orange`, `yellow` |
 | standalone_app_ui | bool | App-like mode when PWA |
 | show_recording_timer | bool | Show recording duration |
+| show_inline_rewrite | bool | Show Rewrite on voice/text composer screens |
 | transcription_text_size | str | `small`, `medium`, `large` |
 | interface_language | str | UI language (e.g. `pt-pt`, `en`) |
 | drive_attachment_folder_name | str | GDrive folder path |

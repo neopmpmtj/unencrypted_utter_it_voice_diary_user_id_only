@@ -10,6 +10,7 @@ import logging
 
 from django.http import JsonResponse
 from django.shortcuts import render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST, require_http_methods
 from django.contrib.auth.decorators import login_required
@@ -26,6 +27,8 @@ from .services import (
     TextInputError,
 )
 from src.quotas.services import check_token_quota
+from src.accounts.models import UserPreferences
+from src.text_rewrite.config_text_rewrite.text_rewrite_config import get_available_templates
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +37,16 @@ logger = logging.getLogger(__name__)
 @require_http_methods(["GET"])
 def text_input_page(request):
     """Render the text input page."""
+    try:
+        prefs = request.user.preferences
+        show_inline_rewrite = prefs.show_inline_rewrite
+    except UserPreferences.DoesNotExist:
+        show_inline_rewrite = True
     return render(request, 'text_input/index.html', {
         'is_app_admin': getattr(request.user, 'is_app_admin', False),
+        'show_inline_rewrite': show_inline_rewrite,
+        'rewrite_templates': get_available_templates() if show_inline_rewrite else [],
+        'rewrite_api_url': reverse('text_rewrite:api_rewrite'),
     })
 
 

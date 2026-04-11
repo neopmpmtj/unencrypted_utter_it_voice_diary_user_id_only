@@ -130,7 +130,7 @@
             {% endfor %}
           </select>
           <button type="button" id="rewrite-btn"
-                  class="vd-btn px-3 py-1.5 text-sm gap-1.5 border border-input{% if not can_rewrite %} opacity-50 cursor-not-allowed{% endif %}"
+                  class="vd-btn vd-btn-ghost text-foreground px-3 py-1.5 text-sm gap-1.5 border border-accent{% if not can_rewrite %} opacity-50 cursor-not-allowed{% endif %}"
                   {% if not can_rewrite %}disabled title="{% trans 'Upgrade to Pro to use text rewriting' %}"{% endif %}
                   aria-label="{% trans 'Rewrite text' %}">
             <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -139,7 +139,7 @@
             <span>{% trans "Rewrite" %}</span>
           </button>
           <button type="button" id="undo-rewrite-btn"
-                  class="hidden vd-btn vd-btn-ghost px-3 py-1.5 text-sm gap-1.5 border border-input"
+                  class="hidden vd-btn vd-btn-ghost text-foreground px-3 py-1.5 text-sm gap-1.5 border border-accent"
                   aria-label="{% trans 'Undo rewrite' %}">
             <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a5 5 0 010 10H9m-6-10l4-4m-4 4l4 4"/>

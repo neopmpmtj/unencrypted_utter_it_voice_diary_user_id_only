@@ -513,6 +513,11 @@ class UserPreferences(models.Model):
         help_text=_('Whether to show the recording duration timer during recording')
     )
 
+    show_inline_rewrite = models.BooleanField(
+        default=True,
+        help_text=_('Whether to show Rewrite on Voice Input and Text Input composer screens')
+    )
+
     TRANSCRIPTION_SIZE_CHOICES = [
         ('small', _('Small')),
         ('medium', _('Medium')),

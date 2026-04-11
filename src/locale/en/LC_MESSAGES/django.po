@@ -169,6 +169,18 @@ msgstr ""
 msgid "Display elapsed recording time below the record button"
 msgstr ""
 
+#: src/accounts/forms.py:467 src/templates/accounts/profile.html:240
+msgid "Show rewrite on voice and text input"
+msgstr ""
+
+#: src/accounts/forms.py:469 src/templates/accounts/profile.html:242
+msgid "When enabled, shows the Rewrite control next to the record button (voice) and next to Save (text)."
+msgstr ""
+
+#: src/accounts/models.py:519
+msgid "Whether to show Rewrite on Voice Input and Text Input composer screens"
+msgstr ""
+
 #: src/accounts/forms.py:468
 msgid "Google Drive folder for attachments"
 msgstr ""

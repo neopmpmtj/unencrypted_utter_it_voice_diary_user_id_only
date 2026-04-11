@@ -211,6 +211,15 @@ class UserPreferencesModelTests(TestCase):
         prefs = UserPreferences.objects.get(user=user)
         self.assertTrue(prefs.show_recording_timer)
 
+    def test_show_inline_rewrite_defaults_to_true(self):
+        """UserPreferences created via signal should have show_inline_rewrite=True by default."""
+        user = CustomUser.objects.create_user(
+            email='inlinerewrite@example.com',
+            password='Pass123',
+        )
+        prefs = UserPreferences.objects.get(user=user)
+        self.assertTrue(prefs.show_inline_rewrite)
+
     def test_transcription_text_size_defaults_to_small(self):
         """UserPreferences created via signal should have transcription_text_size='small' by default."""
         user = CustomUser.objects.create_user(
@@ -851,6 +860,42 @@ class ProfileViewTests(TestCase):
         prefs.refresh_from_db()
         self.assertFalse(prefs.show_recording_timer)
 
+    def test_post_save_preferences_updates_show_inline_rewrite(self):
+        """POST with save_preferences should save show_inline_rewrite to UserPreferences."""
+        user = CustomUser.objects.create_user(
+            email='rewritepref@example.com',
+            password='Pass123',
+        )
+        user.is_email_verified = True
+        user.save()
+        self.client.force_login(user)
+        self._mark_onboarding_complete(user)
+
+        prefs = UserPreferences.objects.get(user=user)
+        prefs.show_inline_rewrite = False
+        prefs.save()
+
+        response = self.client.post(self.profile_url, {
+            'save_preferences': '1',
+            'preferred_language': 'en',
+            'drive_attachment_folder_name': 'VoiceDiaryFiles/attachments',
+            'show_inline_rewrite': 'on',
+            'timezone': 'Europe/Lisbon',
+        })
+        self.assertRedirects(response, self.profile_url + '#voice-diary')
+        prefs.refresh_from_db()
+        self.assertTrue(prefs.show_inline_rewrite)
+
+        response2 = self.client.post(self.profile_url, {
+            'save_preferences': '1',
+            'preferred_language': 'en',
+            'drive_attachment_folder_name': 'VoiceDiaryFiles/attachments',
+            'timezone': 'Europe/Lisbon',
+        })
+        self.assertRedirects(response2, self.profile_url + '#voice-diary')
+        prefs.refresh_from_db()
+        self.assertFalse(prefs.show_inline_rewrite)
+
     def test_preferences_form_saves_timezone(self):
         """Saving the preferences form with a new timezone persists the value."""
         user = CustomUser.objects.create_user(
@@ -946,6 +991,31 @@ class UpdateThemePreferencesTests(TestCase):
         self.assertEqual(response.status_code, 200)
         prefs.refresh_from_db()
         self.assertEqual(prefs.transcription_text_size, 'medium')
+
+    def test_post_show_inline_rewrite_saves_to_preferences(self):
+        """POST with show_inline_rewrite saves via update_theme_preferences."""
+        self.client.force_login(self.user)
+        prefs = UserPreferences.objects.get(user=self.user)
+        prefs.show_inline_rewrite = True
+        prefs.save()
+
+        response = self.client.post(
+            self.theme_url,
+            data='{"show_inline_rewrite": false}',
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        prefs.refresh_from_db()
+        self.assertFalse(prefs.show_inline_rewrite)
+
+        response2 = self.client.post(
+            self.theme_url,
+            data='{"show_inline_rewrite": true}',
+            content_type='application/json',
+        )
+        self.assertEqual(response2.status_code, 200)
+        prefs.refresh_from_db()
+        self.assertTrue(prefs.show_inline_rewrite)
 
     def test_post_requires_login(self):
         """update_theme_preferences requires authenticated user."""

@@ -696,6 +696,10 @@ def update_theme_preferences(request):
         prefs.show_recording_timer = bool(data['show_recording_timer'])
         update_fields.append('show_recording_timer')
 
+    if 'show_inline_rewrite' in data:
+        prefs.show_inline_rewrite = bool(data['show_inline_rewrite'])
+        update_fields.append('show_inline_rewrite')
+
     valid_sizes = ['small', 'medium', 'large']
     if 'transcription_text_size' in data and data['transcription_text_size'] in valid_sizes:
         prefs.transcription_text_size = data['transcription_text_size']

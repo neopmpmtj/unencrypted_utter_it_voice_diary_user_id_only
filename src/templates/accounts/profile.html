@@ -228,6 +228,20 @@
           <p class="text-xs text-muted-foreground">{% trans "Display elapsed recording time below the record button" %}</p>
         </div>
 
+        <div class="flex items-center gap-3">
+          <label class="inline-flex items-center gap-2 cursor-pointer select-none" for="id_show_inline_rewrite">
+            <span class="relative">
+              <input type="checkbox" id="id_show_inline_rewrite" name="show_inline_rewrite"
+                     {% if user_preferences_form.show_inline_rewrite.value %}checked{% endif %}
+                     class="sr-only peer">
+              <span class="block w-9 h-5 rounded-full transition-colors duration-200 bg-muted peer-checked:bg-accent"></span>
+              <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 peer-checked:translate-x-4"></span>
+            </span>
+            <span class="text-sm text-foreground">{% trans "Show rewrite on voice and text input" %}</span>
+          </label>
+          <p class="text-xs text-muted-foreground">{% trans "When enabled, shows the Rewrite control next to the record button (voice) and next to Save (text)." %}</p>
+        </div>
+
         <button type="submit" name="save_preferences" value="1" class="vd-btn vd-btn-accent px-4 py-2 text-sm">{% trans "Save" %}</button>
       </form>
       <script>
@@ -255,6 +269,8 @@
         if (el) el.addEventListener('change', function() { savePref('standalone_app_ui', this.checked); });
         el = document.getElementById('id_show_recording_timer');
         if (el) el.addEventListener('change', function() { savePref('show_recording_timer', this.checked); });
+        el = document.getElementById('id_show_inline_rewrite');
+        if (el) el.addEventListener('change', function() { savePref('show_inline_rewrite', this.checked); });
       })();
       </script>
     </div>

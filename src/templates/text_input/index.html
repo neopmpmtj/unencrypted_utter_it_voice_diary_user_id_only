@@ -53,15 +53,46 @@
             autofocus></textarea>
 
   {# --- Action buttons --- #}
-  <div class="flex items-center justify-center gap-3 py-2">
-    <button type="button" id="textSaveBtn" disabled
-            class="vd-btn vd-btn-accent px-6 py-2.5 text-sm">
-      {% trans "Save" %}
-    </button>
-    <button type="button" id="textClearBtn" disabled
-            class="vd-btn vd-btn-ghost px-4 py-2.5 text-sm border border-input">
-      {% trans "Clear" %}
-    </button>
+  <div class="flex flex-wrap items-center justify-between gap-3 py-2 w-full">
+    <div class="flex flex-wrap items-center gap-2 min-w-0">
+      {% if show_inline_rewrite %}
+      <select id="text-rewrite-template-select"
+              class="vd-input py-1.5 px-2 text-sm w-auto min-w-[120px]">
+        {% for tpl in rewrite_templates %}
+        <option value="{{ tpl.name }}"{% if tpl.name == "grammar" %} selected{% endif %}>{{ tpl.label }}</option>
+        {% endfor %}
+      </select>
+      <button type="button" id="text-rewrite-btn"
+              class="vd-btn vd-btn-ghost px-3 py-1.5 text-sm gap-1.5 border border-accent text-foreground"
+              aria-label="{% trans 'Rewrite text' %}">
+        <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+        </svg>
+        <span>{% trans "Rewrite" %}</span>
+      </button>
+      <button type="button" id="text-undo-rewrite-btn"
+              class="hidden vd-btn vd-btn-ghost px-3 py-1.5 text-sm gap-1.5 border border-accent text-foreground"
+              aria-label="{% trans 'Undo rewrite' %}">
+        <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a5 5 0 010 10H9m-6-10l4-4m-4 4l4 4"/>
+        </svg>
+        <span>{% trans "Undo" %}</span>
+      </button>
+      <div id="text-rewrite-spinner" class="hidden">
+        <div class="vd-spinner h-4 w-4 border-2"></div>
+      </div>
+      {% endif %}
+    </div>
+    <div class="flex items-center gap-3 shrink-0">
+      <button type="button" id="textSaveBtn" disabled
+              class="vd-btn vd-btn-accent px-6 py-2.5 text-sm">
+        {% trans "Save" %}
+      </button>
+      <button type="button" id="textClearBtn" disabled
+              class="vd-btn vd-btn-ghost px-4 py-2.5 text-sm border border-input">
+        {% trans "Clear" %}
+      </button>
+    </div>
   </div>
 
   {# --- Success result --- #}
@@ -94,6 +125,7 @@
 
 {% block extra_js %}
 <script src="{% static 'js/swipe_nav.js' %}"></script>
+{% if show_inline_rewrite %}<script src="{% static 'js/rewrite_inline.js' %}"></script>{% endif %}
 <script>
 (function() {
   'use strict';
@@ -130,6 +162,8 @@
 
   var selectedFiles = [];
   var processingTimeoutId = null;
+  var textSaveInFlight = false;
+  var textRewriteCtl = null;
 
   // File validation
   var MAX_FILE_SIZE = 100 * 1024 * 1024;
@@ -163,7 +197,24 @@
     var hasText = textInput.value.trim().length > 0;
     textSaveBtn.disabled = !hasText;
     textClearBtn.disabled = !hasText && selectedFiles.length === 0;
+    if (textRewriteCtl) textRewriteCtl.updateEnabled();
   }
+
+  {% if show_inline_rewrite %}
+  if (typeof window.initRewriteInline === 'function') {
+    textRewriteCtl = window.initRewriteInline({
+      rewriteUrl: "{{ rewrite_api_url|escapejs }}",
+      selectEl: document.getElementById('text-rewrite-template-select'),
+      btnEl: document.getElementById('text-rewrite-btn'),
+      undoBtn: document.getElementById('text-undo-rewrite-btn'),
+      spinnerEl: document.getElementById('text-rewrite-spinner'),
+      getText: function() { return textInput ? textInput.value : ''; },
+      setText: function(t) { if (textInput) textInput.value = t || ''; },
+      isDisabledExtra: function() { return textSaveInFlight; },
+      onQuotaBlocked: function() { return false; },
+    });
+  }
+  {% endif %}
 
   function showSpinner(state) {
     if (!spinnerOverlay) return;
@@ -251,6 +302,8 @@
     if (!text) { showError('{% trans "Text is required" %}'); return; }
 
     showSpinner('uploading');
+    textSaveInFlight = true;
+    if (textRewriteCtl) textRewriteCtl.updateEnabled();
     textSaveBtn.disabled = true;
     textClearBtn.disabled = true;
 
@@ -278,25 +331,33 @@
         } else if (res.status === 429 && res.data.error === 'quota_exceeded') {
           hideSpinner();
           showError(res.data.message || '{% trans "Daily token quota exceeded." %}');
+          textSaveInFlight = false;
           textSaveBtn.disabled = false;
           textClearBtn.disabled = false;
+          if (textRewriteCtl) textRewriteCtl.updateEnabled();
         } else if (res.status === 403 && res.data.error === 'drive_not_connected') {
           hideSpinner();
           showError('{% trans "Connect Google Drive in your account settings to attach files." %}');
+          textSaveInFlight = false;
           textSaveBtn.disabled = false;
           textClearBtn.disabled = false;
+          if (textRewriteCtl) textRewriteCtl.updateEnabled();
         } else {
           hideSpinner();
           showError(res.data.message || '{% trans "Error saving note" %}');
+          textSaveInFlight = false;
           textSaveBtn.disabled = false;
           textClearBtn.disabled = false;
+          if (textRewriteCtl) textRewriteCtl.updateEnabled();
         }
       })
       .catch(function() {
         hideSpinner();
         showError('{% trans "Error saving note" %}');
+        textSaveInFlight = false;
         textSaveBtn.disabled = false;
         textClearBtn.disabled = false;
+        if (textRewriteCtl) textRewriteCtl.updateEnabled();
       });
   });
 
@@ -304,6 +365,7 @@
   textClearBtn.addEventListener('click', clearForm);
 
   function clearForm() {
+    textSaveInFlight = false;
     textInput.value = '';
     textTitleInput.value = '';
     selectedFiles = [];
@@ -312,6 +374,7 @@
     errorContainer.classList.add('hidden');
     hideSpinner();
     if (pipelineWs) { try { pipelineWs.close(); } catch(_){} pipelineWs = null; }
+    if (textRewriteCtl) textRewriteCtl.resetUndo();
     updateButtons();
     textInput.focus();
   }

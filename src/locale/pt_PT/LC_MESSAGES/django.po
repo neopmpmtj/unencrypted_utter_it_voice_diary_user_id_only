@@ -173,6 +173,18 @@ msgstr "Mostrar temporizador de gravação"
 msgid "Display elapsed recording time below the record button"
 msgstr "Mostrar o tempo de gravação decorrido abaixo do botão de gravar"
 
+#: src/accounts/forms.py:467 src/templates/accounts/profile.html:240
+msgid "Show rewrite on voice and text input"
+msgstr "Mostrar reescrita na entrada de voz e texto"
+
+#: src/accounts/forms.py:469 src/templates/accounts/profile.html:242
+msgid "When enabled, shows the Rewrite control next to the record button (voice) and next to Save (text)."
+msgstr "Quando ativo, mostra o controlo Reescrever junto ao botão de gravar (voz) e junto a Guardar (texto)."
+
+#: src/accounts/models.py:519
+msgid "Whether to show Rewrite on Voice Input and Text Input composer screens"
+msgstr "Se deve mostrar Reescrever nos ecrãs de entrada de voz e de texto"
+
 #: src/accounts/forms.py:468
 msgid "Google Drive folder for attachments"
 msgstr "Pasta do Google Drive para anexos"

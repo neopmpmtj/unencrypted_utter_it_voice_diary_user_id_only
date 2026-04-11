@@ -26,6 +26,7 @@ from src.common.utils import ensure_directory
 from src.common.google_account.auth import verify_drive_permissions, GoogleAuthError
 from src.common.drive_upload import upload_file_to_user_drive_folder, upload_local_file_to_user_drive_folder
 from src.accounts.models import GlobalSettings, UserPreferences
+from src.text_rewrite.config_text_rewrite.text_rewrite_config import get_available_templates
 from src.ingestion.models import (
     IngestItem,
     IngestJob,
@@ -65,14 +66,19 @@ def recording_page(request):
     try:
         prefs = request.user.preferences
         show_timer = prefs.show_recording_timer
+        show_inline_rewrite = prefs.show_inline_rewrite
     except UserPreferences.DoesNotExist:
         show_timer = True
+        show_inline_rewrite = True
 
     context = {
         'max_duration': config.recorder.max_duration,
         'max_file_size_mb': config.recorder.max_file_size_mb,
         'allow_unlimited': config.recorder.allow_unlimited,
         'is_app_admin': getattr(request.user, 'is_app_admin', False),
+        'show_inline_rewrite': show_inline_rewrite,
+        'rewrite_templates': get_available_templates() if show_inline_rewrite else [],
+        'rewrite_api_url': reverse('text_rewrite:api_rewrite'),
         'recorder_config': {
             'uploadUrl': reverse('recordings:upload'),
             'updateEntryUrlTemplate': reverse('recordings:update_entry', args=['00000000-0000-0000-0000-000000000000']).replace('00000000-0000-0000-0000-000000000000', '{id}'),
