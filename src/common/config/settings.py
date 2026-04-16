@@ -3,7 +3,7 @@ Pydantic Settings Configuration
 
 Type-safe configuration for the Voice Diary application.
 Supports:
-- Environment variables (e.g., RECORDER_MAX_DURATION=600)
+- Environment variables (e.g., RECORDER_MAX_DURATION=1200)
 - Database overrides via GlobalSettings model
 - IDE autocomplete via typed config classes
 
@@ -30,7 +30,7 @@ class RecorderConfig(BaseSettings):
     """Configuration for the audio recorder."""
     
     max_duration: int = Field(
-        default=300,
+        default=1200,
         description="Maximum recording duration in seconds (0 = unlimited)"
     )
     allow_unlimited: bool = Field(
@@ -46,7 +46,7 @@ class RecorderConfig(BaseSettings):
         description="Preferred MIME types (WebM preferred, WAV fallback for iOS)"
     )
     max_file_size_mb: int = Field(
-        default=25,
+        default=100,
         description="Maximum upload file size in MB"
     )
     

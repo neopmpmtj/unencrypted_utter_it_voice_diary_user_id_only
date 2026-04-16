@@ -22,8 +22,8 @@ describe('VoiceDiaryRecorder File Attachments', () => {
         // Reset recorder
         recorder = new VoiceDiaryRecorder({
             uploadUrl: '/test/upload/',
-            maxDuration: 300,
-            maxFileSize: 25 * 1024 * 1024,
+            maxDuration: 1200,
+            maxFileSize: 100 * 1024 * 1024,
         });
 
         // Mock WebSocket
