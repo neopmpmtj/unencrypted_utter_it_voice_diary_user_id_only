@@ -8,10 +8,11 @@ import json
 import logging
 import uuid
 from datetime import timedelta
+from pathlib import Path
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import F, Q
-from django.http import HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
 from django.utils import timezone
@@ -25,6 +26,7 @@ from src.common.drive_upload import upload_local_file_to_user_drive_folder
 from src.common.storage_local import (
     allocate_unique_attachment_filename,
     ensure_local_storage_tree,
+    is_attachment_path_allowed_for_user,
     local_attachments_dir_for_item,
     sanitize_storage_filename,
 )
@@ -108,13 +110,34 @@ def _get_item_classification_labels(item) -> list[str]:
         return []
 
 
-def _build_entry_response(item, content_text, title):
+def _attachment_entries_for_api(request, item):
+    """
+    Build attachment dicts for JSON APIs: Drive/web URLs pass through;
+    local filesystem paths become same-origin download URLs.
+    """
+    out = []
+    for f in item.files.filter(role=FileRole.ATTACHMENT):
+        raw = (f.storage_url or "").strip()
+        lower = raw.lower()
+        if lower.startswith("http://") or lower.startswith("https://"):
+            public_url = raw
+        elif raw:
+            rel = reverse("entries:serve_attachment", kwargs={"file_id": f.id})
+            public_url = request.build_absolute_uri(rel)
+        else:
+            public_url = ""
+        out.append({
+            "id": str(f.id),
+            "filename": f.filename,
+            "storage_url": public_url,
+        })
+    return out
+
+
+def _build_entry_response(request, item, content_text, title):
     """Build the entry dict used in API responses."""
     display_text = content_text
-    attachments = [
-        {'filename': f.filename, 'storage_url': f.storage_url}
-        for f in item.files.filter(role=FileRole.ATTACHMENT)
-    ]
+    attachments = _attachment_entries_for_api(request, item)
     return {
         'id': str(item.id),
         'title': title or (f"Entry {item.occurred_at.strftime('%Y-%m-%d %H:%M') if item.occurred_at else 'Unknown'}"),
@@ -125,6 +148,56 @@ def _build_entry_response(item, content_text, title):
         'tags': _get_item_classification_labels(item),
         'attachments': attachments,
     }
+
+
+@login_required
+@require_GET
+def serve_attachment(request, file_id):
+    """
+    Stream an attachment file for the authenticated owner.
+    Local paths are validated under the configured attachments tree; remote
+    storage_url values redirect to the stored URL.
+    """
+    try:
+        item_file = ItemFile.objects.get(
+            pk=file_id,
+            user=request.user,
+            role=FileRole.ATTACHMENT,
+        )
+    except ItemFile.DoesNotExist:
+        raise Http404
+
+    raw = (item_file.storage_url or "").strip()
+    if not raw:
+        raise Http404
+    lower = raw.lower()
+    if lower.startswith("http://") or lower.startswith("https://"):
+        return HttpResponseRedirect(raw)
+
+    config = get_config()
+    file_path = Path(raw)
+    if not file_path.is_absolute():
+        raise Http404
+    try:
+        file_path = file_path.resolve(strict=False)
+    except (OSError, RuntimeError):
+        raise Http404
+    if not is_attachment_path_allowed_for_user(config, file_path, request.user.id):
+        raise Http404
+    if not file_path.is_file():
+        raise Http404
+
+    content_type = (item_file.mime_type or "").strip() or "application/octet-stream"
+    response = FileResponse(
+        open(file_path, "rb"),
+        content_type=content_type,
+        as_attachment=False,
+    )
+    if item_file.filename:
+        response["Content-Disposition"] = f'inline; filename="{item_file.filename}"'
+    else:
+        response["Content-Disposition"] = "inline"
+    return response
 
 
 @login_required
@@ -267,10 +340,6 @@ def entries_list_api(request):
                 content_text = item.content_text or ""
                 summary_text = item.summary_text or ""
                 title = item.title or ""
-                attachments = [
-                    {'filename': f.filename, 'storage_url': f.storage_url}
-                    for f in item.files.filter(role=FileRole.ATTACHMENT)
-                ]
                 entries.append({
                     'id': str(item.id),
                     'title': title or (f"Entry {item.occurred_at.strftime('%Y-%m-%d %H:%M') if item.occurred_at else 'Unknown'}"),
@@ -279,7 +348,7 @@ def entries_list_api(request):
                     'occurred_at': item.occurred_at.isoformat() if item.occurred_at else None,
                     'item_type': item.item_type,
                     'tags': _get_item_classification_labels(item),
-                    'attachments': attachments,
+                    'attachments': _attachment_entries_for_api(request, item),
                 })
             return JsonResponse({
                 'entries': entries,
@@ -333,10 +402,6 @@ def entries_list_api(request):
                 if (search_lower in (content_text or '').lower() or 
                     search_lower in (title or '').lower()):
                     display_text = content_text
-                    attachments = [
-                        {'filename': f.filename, 'storage_url': f.storage_url}
-                        for f in item.files.filter(role=FileRole.ATTACHMENT)
-                    ]
                     entries.append({
                         'id': str(item.id),
                         'title': title or f"Entry {item.occurred_at.strftime('%Y-%m-%d %H:%M') if item.occurred_at else 'Unknown'}",
@@ -345,7 +410,7 @@ def entries_list_api(request):
                         'occurred_at': item.occurred_at.isoformat() if item.occurred_at else None,
                         'item_type': item.item_type,
                         'tags': _get_item_classification_labels(item),
-                        'attachments': attachments,
+                        'attachments': _attachment_entries_for_api(request, item),
                     })
                     
                     if len(entries) >= page_size:
@@ -371,10 +436,6 @@ def entries_list_api(request):
             content_text = item.content_text or ""
             title = item.title or ""
             display_text = content_text
-            attachments = [
-                {'filename': f.filename, 'storage_url': f.storage_url}
-                for f in item.files.filter(role=FileRole.ATTACHMENT)
-            ]
             entries.append({
                 'id': str(item.id),
                 'title': title or f"Entry {item.occurred_at.strftime('%Y-%m-%d %H:%M') if item.occurred_at else 'Unknown'}",
@@ -383,7 +444,7 @@ def entries_list_api(request):
                 'occurred_at': item.occurred_at.isoformat() if item.occurred_at else None,
                 'item_type': item.item_type,
                 'tags': _get_item_classification_labels(item),
-                'attachments': attachments,
+                'attachments': _attachment_entries_for_api(request, item),
             })
         
         if items:
@@ -646,7 +707,7 @@ def entry_edit_api(request, entry_id):
             logger.warning(f"Could not record GIGO entry: {e}")
         attachment_count = _process_edit_attachments(request, new_item)
         response_data = {
-            'entry': _build_entry_response(new_item, content_text or "", title or ""),
+            'entry': _build_entry_response(request, new_item, content_text or "", title or ""),
             'created_new': True,
         }
         if has_calendar_classification(source_item):
@@ -700,7 +761,7 @@ def entry_edit_api(request, entry_id):
         index_entry_prep_task.delay(str(item.id))
         attachment_count = _process_edit_attachments(request, item)
         response_data = {
-            'entry': _build_entry_response(item, content_text or "", title or ""),
+            'entry': _build_entry_response(request, item, content_text or "", title or ""),
             'created_new': False,
         }
         if has_calendar_classification(item):

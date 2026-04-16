@@ -325,6 +325,12 @@ class StorageConfig(BaseSettings):
 
     class Config:
         env_prefix = "STORAGE_"
+        # Required so STORAGE_* from project .env are applied. Unlike
+        # STORAGE_AUDIO_TEMP_PATH (set on os.environ in Django base.py), other
+        # storage keys are not exported to the environment by decouple.
+        env_file = _default_env_path()
+        env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 class TranscriptionRateLimitConfig(BaseSettings):

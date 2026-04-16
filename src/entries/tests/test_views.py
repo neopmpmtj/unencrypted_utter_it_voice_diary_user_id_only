@@ -7,6 +7,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -365,6 +366,38 @@ class EntriesListApiTests(TestCase):
         self.assertEqual(att["filename"], "doc.pdf")
         self.assertEqual(att["storage_url"], "")
 
+    def test_entries_list_api_attachment_local_filesystem_path_gets_download_url(self):
+        """Non-HTTP storage_url is exposed as same-origin attachment download URL."""
+        item = IngestItem.objects.create(
+            user=self.user,
+            item_type="audio",
+            status="processed",
+            is_deleted=False,
+            occurred_at=timezone.now(),
+            title="Local attach",
+            content_text="Content",
+        )
+        att = ItemFile.objects.create(
+            user=self.user,
+            item=item,
+            role=FileRole.ATTACHMENT,
+            filename="photo.jpg",
+            mime_type="image/jpeg",
+            storage_url="/data/attachments/1/item/photo.jpg",
+            bytes=10,
+        )
+        url = reverse("entries:api_list")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        att_out = data["entries"][0]["attachments"][0]
+        self.assertEqual(att_out["filename"], "photo.jpg")
+        self.assertEqual(att_out["id"], str(att.id))
+        expected = "http://testserver" + reverse(
+            "entries:serve_attachment", kwargs={"file_id": att.id}
+        )
+        self.assertEqual(att_out["storage_url"], expected)
+
     def test_entries_list_api_ids_param_returns_specified_entries_in_order(self):
         """GET ?ids=uuid1,uuid2 returns only those entries in requested order with content_full."""
         items = []
@@ -522,6 +555,129 @@ class EntriesListApiTests(TestCase):
         self.assertEqual(len(data["entries"]), 1)
         mock_fin_disp.assert_not_called()
         mock_list_disp.assert_not_called()
+
+
+class ServeAttachmentTests(TestCase):
+    """Tests for GET /api/attachments/<id>/download/."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = CustomUser.objects.create_user(
+            email="serveattach@example.com",
+            password="Pass123",
+        )
+        self.user.is_email_verified = True
+        self.user.save()
+        self.client.force_login(self.user)
+
+        prefs = UserPreferences.objects.get(user=self.user)
+        prefs.onboarding_completed = True
+        prefs.save()
+
+    def test_serve_attachment_streams_local_file(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            uid = str(self.user.id)
+            att_dir = tmp / "attachments" / uid
+            att_dir.mkdir(parents=True)
+            file_path = att_dir / "doc.txt"
+            file_path.write_bytes(b"hello attachment")
+            item = IngestItem.objects.create(
+                user=self.user,
+                item_type="text",
+                status="processed",
+                is_deleted=False,
+                occurred_at=timezone.now(),
+                title="T",
+                content_text="C",
+            )
+            item_file = ItemFile.objects.create(
+                user=self.user,
+                item=item,
+                role=FileRole.ATTACHMENT,
+                filename="doc.txt",
+                mime_type="text/plain",
+                storage_url=str(file_path.resolve()),
+                bytes=len(b"hello attachment"),
+            )
+            cfg = SimpleNamespace(
+                storage=SimpleNamespace(
+                    save_attachments_to_local_filesystem=True,
+                    local_storage_root=str(tmp.resolve()),
+                    local_attachments_subdir="attachments",
+                    local_recordings_subdir="recordings",
+                )
+            )
+            with patch("src.entries.views.get_config", return_value=cfg):
+                dl = reverse("entries:serve_attachment", kwargs={"file_id": item_file.id})
+                response = self.client.get(dl)
+            self.assertEqual(response.status_code, 200)
+            body = b"".join(response.streaming_content)
+            self.assertEqual(body, b"hello attachment")
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_serve_attachment_404_when_path_outside_allowed_tree(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            (tmp / "evil.txt").write_bytes(b"x")
+            item = IngestItem.objects.create(
+                user=self.user,
+                item_type="text",
+                status="processed",
+                is_deleted=False,
+                occurred_at=timezone.now(),
+                title="T",
+                content_text="C",
+            )
+            item_file = ItemFile.objects.create(
+                user=self.user,
+                item=item,
+                role=FileRole.ATTACHMENT,
+                filename="evil.txt",
+                mime_type="text/plain",
+                storage_url=str((tmp / "evil.txt").resolve()),
+                bytes=1,
+            )
+            cfg = SimpleNamespace(
+                storage=SimpleNamespace(
+                    save_attachments_to_local_filesystem=True,
+                    local_storage_root=str(tmp.resolve()),
+                    local_attachments_subdir="attachments",
+                    local_recordings_subdir="recordings",
+                )
+            )
+            with patch("src.entries.views.get_config", return_value=cfg):
+                dl = reverse("entries:serve_attachment", kwargs={"file_id": item_file.id})
+                response = self.client.get(dl)
+            self.assertEqual(response.status_code, 404)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_serve_attachment_redirects_for_https_storage_url(self):
+        item = IngestItem.objects.create(
+            user=self.user,
+            item_type="text",
+            status="processed",
+            is_deleted=False,
+            occurred_at=timezone.now(),
+            title="T",
+            content_text="C",
+        )
+        target = "https://drive.example.com/file"
+        item_file = ItemFile.objects.create(
+            user=self.user,
+            item=item,
+            role=FileRole.ATTACHMENT,
+            filename="remote.pdf",
+            mime_type="application/pdf",
+            storage_url=target,
+            bytes=1,
+        )
+        dl = reverse("entries:serve_attachment", kwargs={"file_id": item_file.id})
+        response = self.client.get(dl)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], target)
 
 
 class EntryEditApiTests(TestCase):

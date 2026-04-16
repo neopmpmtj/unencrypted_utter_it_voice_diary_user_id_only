@@ -153,3 +153,43 @@ def is_audio_storage_path_allowed_for_user(
         return True
     except ValueError:
         return False
+
+
+def is_attachment_path_allowed_for_user(
+    config: AppConfig, file_path: Path, user_id: int
+) -> bool:
+    """
+    True if file_path resolves under this user's local attachments directory:
+    ``{local_storage_root}/{local_attachments_subdir}/{user_id}/``.
+
+    Read-only: does not create directories. When local filesystem storage is
+    disabled or misconfigured, returns False.
+    """
+    if not config.storage.save_attachments_to_local_filesystem:
+        return False
+    root_raw = (config.storage.local_storage_root or "").strip()
+    if not root_raw:
+        return False
+    try:
+        fp = Path(file_path).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+
+    try:
+        storage_root = resolve_local_storage_root(config)
+    except (OSError, RuntimeError):
+        return False
+
+    user_att = storage_root / config.storage.local_attachments_subdir / str(user_id)
+    if user_att.exists() and not user_att.is_dir():
+        return False
+    try:
+        user_att_resolved = user_att.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+
+    try:
+        fp.relative_to(user_att_resolved)
+        return True
+    except ValueError:
+        return False
