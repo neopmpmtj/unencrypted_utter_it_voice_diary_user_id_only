@@ -3368,8 +3368,8 @@ msgstr ""
 #: src/templates/recent_recordings/list.html:10
 #, python-format
 msgid ""
-"Your last recording is available for up to %(hours)s hour(s) after you "
-"record."
+"Your last recording is available for up to %(days)s day(s) after you record "
+"(while the original file is kept)."
 msgstr ""
 
 #: src/templates/recent_recordings/list.html:27
@@ -3378,7 +3378,7 @@ msgstr ""
 
 #: src/templates/recent_recordings/list.html:34
 #, python-format
-msgid "No recording available. Recordings are kept for %(hours)s hour(s)."
+msgid "No recording available. Original audio is kept for %(days)s day(s)."
 msgstr ""
 
 #: src/templates/recordings/index.html:4

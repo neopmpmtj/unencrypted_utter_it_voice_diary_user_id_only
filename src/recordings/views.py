@@ -26,6 +26,7 @@ from src.common.utils import ensure_directory
 from src.common.google_account.auth import verify_drive_permissions, GoogleAuthError
 from src.common.drive_upload import upload_file_to_user_drive_folder, upload_local_file_to_user_drive_folder
 from src.common.storage_local import (
+    allocate_unique_attachment_filename,
     ensure_local_storage_tree,
     local_attachments_dir_for_item,
     local_recording_user_dir,
@@ -176,12 +177,16 @@ def upload_file_to_drive(request):
             uploaded_infos = []
             if use_local_filesystem:
                 ensure_local_storage_tree(config)
+                attach_dir = local_attachments_dir_for_item(
+                    config, request.user.id, item.id
+                )
+                used_local_names: set[str] = set()
                 for uploaded in files_list:
-                    safe_name = sanitize_storage_filename(
+                    safe_base = sanitize_storage_filename(
                         getattr(uploaded, "name", "") or "file"
                     )
-                    attach_dir = local_attachments_dir_for_item(
-                        config, request.user.id, item.id
+                    safe_name = allocate_unique_attachment_filename(
+                        attach_dir, safe_base, used_local_names
                     )
                     local_path = attach_dir / safe_name
                     with open(local_path, "wb") as f:
@@ -408,12 +413,16 @@ def upload_audio(request):
                 attach_dir = local_attachments_dir_for_item(
                     config, request.user.id, item_id
                 )
+                used_local_names: set[str] = set()
                 for uploaded_file in attachment_files:
                     if not uploaded_file:
                         continue
                     try:
-                        safe_name = sanitize_storage_filename(
+                        safe_base = sanitize_storage_filename(
                             uploaded_file.name or "file"
+                        )
+                        safe_name = allocate_unique_attachment_filename(
+                            attach_dir, safe_base, used_local_names
                         )
                         local_path = attach_dir / safe_name
                         with open(local_path, "wb") as f:
@@ -687,12 +696,16 @@ def update_entry_content(request, item_id):
             attach_dir = local_attachments_dir_for_item(
                 config, request.user.id, item.id
             )
+            used_local_names: set[str] = set()
             for uploaded_file in files_list:
                 if not uploaded_file:
                     continue
                 try:
-                    safe_name = sanitize_storage_filename(
+                    safe_base = sanitize_storage_filename(
                         uploaded_file.name or "file"
+                    )
+                    safe_name = allocate_unique_attachment_filename(
+                        attach_dir, safe_base, used_local_names
                     )
                     local_path = attach_dir / safe_name
                     with open(local_path, "wb") as f:

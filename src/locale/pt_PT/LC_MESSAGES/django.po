@@ -3699,11 +3699,11 @@ msgstr "Consultas"
 #: src/templates/recent_recordings/list.html:10
 #, python-format
 msgid ""
-"Your last recording is available for up to %(hours)s hour(s) after you "
-"record."
+"Your last recording is available for up to %(days)s day(s) after you record "
+"(while the original file is kept)."
 msgstr ""
-"A sua última gravação está disponível durante até %(hours)s hora(s) após "
-"gravar."
+"A sua última gravação está disponível até %(days)s dia(s) após gravar "
+"(enquanto o ficheiro original for mantido)."
 
 #: src/templates/recent_recordings/list.html:27
 msgid "Your browser does not support the audio element."
@@ -3711,10 +3711,10 @@ msgstr "O seu browser não suporta o elemento de áudio."
 
 #: src/templates/recent_recordings/list.html:34
 #, python-format
-msgid "No recording available. Recordings are kept for %(hours)s hour(s)."
+msgid "No recording available. Original audio is kept for %(days)s day(s)."
 msgstr ""
-"Nenhuma gravação disponível. As gravações são mantidas durante %(hours)s "
-"hora(s)."
+"Nenhuma gravação disponível. O áudio original é mantido durante %(days)s "
+"dia(s)."
 
 #: src/templates/recordings/index.html:4
 msgid "Voice Input"

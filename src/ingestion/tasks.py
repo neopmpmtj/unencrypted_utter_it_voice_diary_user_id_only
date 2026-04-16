@@ -553,13 +553,13 @@ def process_audio_ingest(self, job_id: str):
         item.title = item.title or ""
         item.status = 'processed'
 
-        # Schedule audio deletion based on admin-configurable retention
-        from src.accounts.audio_retention_config import get_audio_retention_hours
-        retention_hours = get_audio_retention_hours()
-        if retention_hours == 0:
+        # Schedule audio deletion based on admin-configurable retention (days)
+        from src.accounts.audio_retention_config import get_audio_original_retention_timedelta
+        retention_td = get_audio_original_retention_timedelta()
+        if retention_td.total_seconds() <= 0:
             cleanup_temp_files(item)
         else:
-            item.audio_deletion_scheduled_at = timezone.now() + timedelta(hours=retention_hours)
+            item.audio_deletion_scheduled_at = timezone.now() + retention_td
 
         item.save()
 

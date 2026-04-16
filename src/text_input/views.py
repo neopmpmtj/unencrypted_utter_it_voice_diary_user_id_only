@@ -20,6 +20,7 @@ from src.common.config import get_config
 from src.common.google_account.auth import verify_drive_permissions
 from src.common.drive_upload import upload_file_to_user_drive_folder
 from src.common.storage_local import (
+    allocate_unique_attachment_filename,
     ensure_local_storage_tree,
     local_attachments_dir_for_item,
     sanitize_storage_filename,
@@ -196,10 +197,14 @@ def ingest_text(request):
         try:
             if use_local_filesystem:
                 ensure_local_storage_tree(config)
+                attach_dir = local_attachments_dir_for_item(
+                    config, request.user.id, item.id
+                )
+                used_local_names: set[str] = set()
                 for f in files_list:
-                    safe_name = sanitize_storage_filename(f.name or "file")
-                    attach_dir = local_attachments_dir_for_item(
-                        config, request.user.id, item.id
+                    safe_base = sanitize_storage_filename(f.name or "file")
+                    safe_name = allocate_unique_attachment_filename(
+                        attach_dir, safe_base, used_local_names
                     )
                     local_path = attach_dir / safe_name
                     with open(local_path, "wb") as out:

@@ -141,7 +141,7 @@ class ListRecordingsViewTests(TestCase):
                 self.assertNotContains(response, str(older_item.id))
 
     def test_list_excludes_recordings_outside_retention_window(self):
-        """Recordings older than retention_hours are not shown."""
+        """Recordings older than retention_days are not shown."""
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             user_dir = base / str(self.user.id)
@@ -149,13 +149,19 @@ class ListRecordingsViewTests(TestCase):
             audio_path = user_dir / 'old-audio.webm'
             audio_path.write_bytes(b'old audio')
 
-            with patch('src.vd_tools.recent_recordings.views.get_audio_retention_hours', return_value=1):
+            with patch(
+                'src.vd_tools.recent_recordings.views.get_audio_retention_days',
+                return_value=1,
+            ), patch(
+                'src.vd_tools.recent_recordings.views.get_audio_original_retention_timedelta',
+                return_value=timezone.timedelta(days=1),
+            ):
                 item = IngestItem.objects.create(
                     user=self.user,
                     item_type=ItemType.AUDIO,
                     status=IngestStatus.PROCESSED,
                     is_deleted=False,
-                    occurred_at=timezone.now() - timezone.timedelta(hours=2),
+                    occurred_at=timezone.now() - timezone.timedelta(days=2),
                     title='',
                 )
                 ItemFile.objects.create(
@@ -265,7 +271,7 @@ class ServeAudioViewTests(TestCase):
                 self.assertEqual(response.status_code, 404)
 
     def test_serve_404_when_item_outside_retention_window(self):
-        """serve_audio returns 404 when recording is older than retention_hours."""
+        """serve_audio returns 404 when recording is older than retention_days."""
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             user_dir = base / str(self.user.id)
@@ -273,12 +279,18 @@ class ServeAudioViewTests(TestCase):
             audio_path = user_dir / 'old-audio.webm'
             audio_path.write_bytes(b'old audio')
 
-            with patch('src.vd_tools.recent_recordings.views.get_audio_retention_hours', return_value=1):
+            with patch(
+                'src.vd_tools.recent_recordings.views.get_audio_retention_days',
+                return_value=1,
+            ), patch(
+                'src.vd_tools.recent_recordings.views.get_audio_original_retention_timedelta',
+                return_value=timezone.timedelta(days=1),
+            ):
                 item = IngestItem.objects.create(
                     user=self.user,
                     item_type=ItemType.AUDIO,
                     is_deleted=False,
-                    occurred_at=timezone.now() - timezone.timedelta(hours=2),
+                    occurred_at=timezone.now() - timezone.timedelta(days=2),
                 )
                 ItemFile.objects.create(
                     user=self.user,

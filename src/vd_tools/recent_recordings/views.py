@@ -1,7 +1,7 @@
 """
 Views for Listen to Last Recording tool.
 
-Shows the user's last recording with playback. Available for up to N hours (N from admin config).
+Shows the user's last recording with playback. Available while the original file is retained (days from admin config).
 """
 
 from pathlib import Path
@@ -10,10 +10,12 @@ from django.contrib.auth.decorators import login_required
 from django.http import FileResponse, Http404
 from django.shortcuts import render
 from django.utils import timezone
-from django.utils.translation import gettext as _
 from django.views.decorators.http import require_GET
 
-from src.accounts.audio_retention_config import get_audio_retention_hours
+from src.accounts.audio_retention_config import (
+    get_audio_original_retention_timedelta,
+    get_audio_retention_days,
+)
 from src.common.config import get_config
 from src.common.storage_local import is_audio_storage_path_allowed_for_user
 from src.ingestion.models import IngestItem, FileRole, IngestStatus
@@ -30,11 +32,11 @@ MIME_TYPES = {
 @require_GET
 def list_recordings(request):
     """
-    Show the user's last recording. Available for up to N hours (N from admin config).
+    Show the user's last recording. Available within the configured original-audio retention period.
     Only items with existing audio files are shown.
     """
-    retention_hours = get_audio_retention_hours()
-    cutoff = timezone.now() - timezone.timedelta(hours=retention_hours)
+    retention_days = get_audio_retention_days()
+    cutoff = timezone.now() - get_audio_original_retention_timedelta()
 
     # Show only the single most recent recording with audio file
     items = (
@@ -80,7 +82,7 @@ def list_recordings(request):
 
     return render(request, 'recent_recordings/list.html', {
         'recordings': recordings,
-        'retention_hours': retention_hours,
+        'retention_days': retention_days,
     })
 
 
@@ -101,8 +103,7 @@ def serve_audio(request, item_id):
     except IngestItem.DoesNotExist:
         raise Http404
 
-    retention_hours = get_audio_retention_hours()
-    cutoff = timezone.now() - timezone.timedelta(hours=retention_hours)
+    cutoff = timezone.now() - get_audio_original_retention_timedelta()
     if item.occurred_at is None or item.occurred_at < cutoff:
         raise Http404
 

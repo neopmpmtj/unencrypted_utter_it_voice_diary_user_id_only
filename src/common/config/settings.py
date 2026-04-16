@@ -283,7 +283,7 @@ class StorageConfig(BaseSettings):
         description="Default audio retention period in days"
     )
     save_attachments_to_local_filesystem: bool = Field(
-        default=True,
+        default=False,
         description=(
             "When true, persist attachments and stored recordings under local_storage_root "
             "instead of uploading attachments to Google Drive"
@@ -313,7 +313,7 @@ class StorageConfig(BaseSettings):
         root = (self.local_storage_root or "").strip()
         if not root:
             raise ValueError(
-                "local_storage_root (STORAGE_LOCAL_STORAGE_ROOT or LOCAL_STORAGE_ROOT) is required "
+                "local_storage_root (STORAGE_LOCAL_STORAGE_ROOT) is required "
                 "when save_attachments_to_local_filesystem is true"
             )
         p = Path(root).expanduser()

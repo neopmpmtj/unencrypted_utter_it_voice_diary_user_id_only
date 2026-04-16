@@ -23,6 +23,7 @@ from src.common.utils import ensure_directory
 from src.common.google_account.auth import verify_drive_permissions, GoogleAuthError
 from src.common.drive_upload import upload_local_file_to_user_drive_folder
 from src.common.storage_local import (
+    allocate_unique_attachment_filename,
     ensure_local_storage_tree,
     local_attachments_dir_for_item,
     sanitize_storage_filename,
@@ -502,15 +503,18 @@ def _process_edit_attachments(request, item) -> int:
         attach_dir = storage_base / str(request.user.id) / 'attachments' / str(item.id)
         ensure_directory(attach_dir)
     attachment_count = 0
+    used_local_names: set[str] = set()
     for uploaded_file in files_list:
         if not uploaded_file:
             continue
         try:
-            safe_name = (
-                sanitize_storage_filename(uploaded_file.name or "file")
-                if use_local_filesystem
-                else (uploaded_file.name or "file")
-            )
+            if use_local_filesystem:
+                safe_base = sanitize_storage_filename(uploaded_file.name or "file")
+                safe_name = allocate_unique_attachment_filename(
+                    attach_dir, safe_base, used_local_names
+                )
+            else:
+                safe_name = uploaded_file.name or "file"
             local_path = attach_dir / safe_name
             with open(local_path, 'wb') as f:
                 for chunk in uploaded_file.chunks():

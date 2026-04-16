@@ -30,6 +30,34 @@ def sanitize_storage_filename(name: str) -> str:
     return safe[:200]
 
 
+def allocate_unique_attachment_filename(
+    directory: Path, safe_name: str, used: set[str]
+) -> str:
+    """
+    Pick a filename under ``directory`` that is not in ``used`` and does not
+    clobber an existing file. Names already written in the same batch must be
+    listed in ``used``; this function adds the returned name to ``used``.
+
+    Collisions get numeric suffixes before the extension: ``a.pdf``, ``a_1.pdf``, …
+    """
+    base = (safe_name or "").strip() or "uploaded_file"
+    path_from = Path(base)
+    stem = path_from.stem or "file"
+    suffix = path_from.suffix
+    candidate = base
+    n = 1
+    while candidate in used or (directory / candidate).exists():
+        if suffix:
+            candidate = f"{stem}_{n}{suffix}"
+        else:
+            candidate = f"{stem}_{n}"
+        n += 1
+        if n > 10_000:
+            raise OSError(f"Could not allocate unique filename for {safe_name!r}")
+    used.add(candidate)
+    return candidate
+
+
 def resolve_local_storage_root(config: AppConfig) -> Path:
     root = (config.storage.local_storage_root or "").strip()
     return Path(root).expanduser().resolve()
@@ -80,25 +108,48 @@ def is_audio_storage_path_allowed_for_user(
     """
     True if file_path is under the temp audio tree or, when local mode is on,
     under this user's permanent recordings directory.
-    """
-    from src.common.utils.file_sys_utils import ensure_directory
 
-    fp = file_path.resolve()
-    temp_root = ensure_directory(config.storage.audio_temp_path).resolve()
+    Read-only: does not create directories. Misconfiguration (e.g. a file where
+    the temp audio path should be) yields False instead of raising.
+    """
+    try:
+        fp = Path(file_path).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+
+    temp_base = Path(config.storage.audio_temp_path).expanduser()
+    if not str(temp_base).strip():
+        return False
+    if temp_base.exists() and not temp_base.is_dir():
+        return False
+    try:
+        temp_root = temp_base.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+
     try:
         fp.relative_to(temp_root)
         return True
     except ValueError:
         pass
+
     if not config.storage.save_attachments_to_local_filesystem:
         return False
+
     user_rec = (
         resolve_local_storage_root(config)
         / config.storage.local_recordings_subdir
         / str(user_id)
-    ).resolve()
+    )
+    if user_rec.exists() and not user_rec.is_dir():
+        return False
     try:
-        fp.relative_to(user_rec)
+        user_rec_resolved = user_rec.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+
+    try:
+        fp.relative_to(user_rec_resolved)
         return True
     except ValueError:
         return False

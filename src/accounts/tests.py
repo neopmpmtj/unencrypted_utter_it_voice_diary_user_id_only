@@ -1,4 +1,5 @@
 import time
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.conf import settings
@@ -11,31 +12,24 @@ from django.utils import timezone
 from src.common.utils.rate_limiter import IdentifierRateLimiter
 
 from .models import CustomUser, GlobalSettings, UserPreferences
-from .audio_retention_config import get_audio_retention_days, get_audio_retention_hours
+from .audio_retention_config import (
+    get_audio_original_retention_timedelta,
+    get_audio_retention_days,
+)
 
 
-class GetAudioRetentionHoursTests(TestCase):
-    """Tests for get_audio_retention_hours."""
+class GetAudioOriginalRetentionTimedeltaTests(TestCase):
+    """Tests for get_audio_original_retention_timedelta."""
 
-    def test_returns_default_when_no_globalsetting(self):
-        """Returns 1 when storage.audio_retention_hours is not set."""
-        self.assertEqual(get_audio_retention_hours(), 1)
+    def test_matches_default_days(self):
+        self.assertEqual(get_audio_original_retention_timedelta(), timedelta(days=3))
 
-    def test_returns_value_from_globalsettings(self):
-        """Returns value from GlobalSettings when set."""
+    def test_zero_days_is_immediate(self):
         GlobalSettings.objects.create(
-            key='storage.audio_retention_hours',
-            value=2,
+            key='storage.audio_retention_days',
+            value=0,
         )
-        self.assertEqual(get_audio_retention_hours(), 2)
-
-    def test_returns_int_even_if_stored_as_string(self):
-        """Converts string value to int."""
-        GlobalSettings.objects.create(
-            key='storage.audio_retention_hours',
-            value='3',
-        )
-        self.assertEqual(get_audio_retention_hours(), 3)
+        self.assertEqual(get_audio_original_retention_timedelta(), timedelta(0))
 
 
 class GetAudioRetentionDaysTests(TestCase):

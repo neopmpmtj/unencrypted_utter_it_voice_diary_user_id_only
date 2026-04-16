@@ -7,7 +7,7 @@
 {% block dashboard_content %}
 <div class="space-y-6 animate-fade-in">
   <p class="text-sm text-muted-foreground">
-    {% blocktrans with hours=retention_hours %}Your last recording is available for up to {{ hours }} hour(s) after you record.{% endblocktrans %}
+    {% blocktrans with days=retention_days %}Your last recording is available for up to {{ days }} day(s) after you record (while the original file is kept).{% endblocktrans %}
   </p>
 
   {% if error %}
@@ -31,7 +31,7 @@
     {% endfor %}
   </div>
   {% else %}
-  <p class="text-sm text-muted-foreground">{% blocktrans with hours=retention_hours %}No recording available. Recordings are kept for {{ hours }} hour(s).{% endblocktrans %}</p>
+  <p class="text-sm text-muted-foreground">{% blocktrans with days=retention_days %}No recording available. Original audio is kept for {{ days }} day(s).{% endblocktrans %}</p>
   {% endif %}
 </div>
 {% endblock %}
