@@ -164,6 +164,7 @@
   var processingTimeoutId = null;
   var textSaveInFlight = false;
   var textRewriteCtl = null;
+  var saveAttachmentsLocally = {{ save_attachments_to_local_filesystem|yesno:"true,false" }};
 
   // File validation
   var MAX_FILE_SIZE = 100 * 1024 * 1024;
@@ -335,7 +336,7 @@
           textSaveBtn.disabled = false;
           textClearBtn.disabled = false;
           if (textRewriteCtl) textRewriteCtl.updateEnabled();
-        } else if (res.status === 403 && res.data.error === 'drive_not_connected') {
+        } else if (!saveAttachmentsLocally && res.status === 403 && res.data.error === 'drive_not_connected') {
           hideSpinner();
           showError('{% trans "Connect Google Drive in your account settings to attach files." %}');
           textSaveInFlight = false;

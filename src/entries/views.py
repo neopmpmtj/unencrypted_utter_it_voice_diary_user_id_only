@@ -22,6 +22,11 @@ from django.views.decorators.csrf import csrf_protect
 from src.common.utils import ensure_directory
 from src.common.google_account.auth import verify_drive_permissions, GoogleAuthError
 from src.common.drive_upload import upload_local_file_to_user_drive_folder
+from src.common.storage_local import (
+    ensure_local_storage_tree,
+    local_attachments_dir_for_item,
+    sanitize_storage_filename,
+)
 
 from src.accounts.models import GlobalSettings
 from src.batch_calendar.services import delete_batch_calendar_for_item, delete_calendar_events_for_item
@@ -483,49 +488,79 @@ def _process_edit_attachments(request, item) -> int:
         return 0
     config = get_config()
     storage_base = ensure_directory(config.storage.audio_temp_path)
-    if not verify_drive_permissions(request.user):
-        logger.warning("User %s has no Drive access, skipping edit attachment upload", request.user.id)
+    use_local_filesystem = config.storage.save_attachments_to_local_filesystem
+    if use_local_filesystem:
+        ensure_local_storage_tree(config)
+        attach_dir = local_attachments_dir_for_item(config, request.user.id, item.id)
+    elif not verify_drive_permissions(request.user):
+        logger.warning(
+            "User %s has no Drive access, skipping edit attachment upload",
+            request.user.id,
+        )
         return 0
-    attach_dir = storage_base / str(request.user.id) / 'attachments' / str(item.id)
-    ensure_directory(attach_dir)
+    else:
+        attach_dir = storage_base / str(request.user.id) / 'attachments' / str(item.id)
+        ensure_directory(attach_dir)
     attachment_count = 0
     for uploaded_file in files_list:
         if not uploaded_file:
             continue
         try:
-            safe_name = uploaded_file.name or 'file'
+            safe_name = (
+                sanitize_storage_filename(uploaded_file.name or "file")
+                if use_local_filesystem
+                else (uploaded_file.name or "file")
+            )
             local_path = attach_dir / safe_name
             with open(local_path, 'wb') as f:
                 for chunk in uploaded_file.chunks():
                     f.write(chunk)
-            itemfile = ItemFile.objects.create(
-                user=request.user,
-                item=item,
-                role=FileRole.ATTACHMENT,
-                filename=safe_name,
-                mime_type=uploaded_file.content_type or 'application/octet-stream',
-                storage_url='',
-                bytes=uploaded_file.size,
-            )
-            try:
-                result = upload_local_file_to_user_drive_folder(
-                    request.user,
-                    str(local_path),
-                    safe_name,
-                    uploaded_file.content_type or 'application/octet-stream',
-                    subfolder_name=str(item.id),
+            if use_local_filesystem:
+                resolved = str(local_path.resolve())
+                ItemFile.objects.create(
+                    user=request.user,
+                    item=item,
+                    role=FileRole.ATTACHMENT,
+                    filename=safe_name,
+                    mime_type=uploaded_file.content_type or 'application/octet-stream',
+                    storage_url=resolved,
+                    drive_folder_id='',
+                    bytes=uploaded_file.size,
                 )
-                itemfile.storage_url = result.get('webViewLink', '')
-                itemfile.drive_folder_id = result.get('parent_folder_id', '')
-                itemfile.filename = result.get('name', safe_name)
-                itemfile.save(update_fields=['storage_url', 'drive_folder_id', 'filename'])
-                logger.info("Uploaded edit attachment to Drive for item %s: %s", item.id, safe_name)
-            except GoogleAuthError as e:
-                logger.warning("Drive auth failed for edit attachment %s: %s", safe_name, e)
-            except Exception as e:
-                logger.error("Failed to upload edit attachment %s to Drive: %s", safe_name, e)
-            finally:
-                local_path.unlink(missing_ok=True)
+                logger.info(
+                    "Saved edit attachment on local disk for item %s: %s",
+                    item.id,
+                    safe_name,
+                )
+            else:
+                itemfile = ItemFile.objects.create(
+                    user=request.user,
+                    item=item,
+                    role=FileRole.ATTACHMENT,
+                    filename=safe_name,
+                    mime_type=uploaded_file.content_type or 'application/octet-stream',
+                    storage_url='',
+                    bytes=uploaded_file.size,
+                )
+                try:
+                    result = upload_local_file_to_user_drive_folder(
+                        request.user,
+                        str(local_path),
+                        safe_name,
+                        uploaded_file.content_type or 'application/octet-stream',
+                        subfolder_name=str(item.id),
+                    )
+                    itemfile.storage_url = result.get('webViewLink', '')
+                    itemfile.drive_folder_id = result.get('parent_folder_id', '')
+                    itemfile.filename = result.get('name', safe_name)
+                    itemfile.save(update_fields=['storage_url', 'drive_folder_id', 'filename'])
+                    logger.info("Uploaded edit attachment to Drive for item %s: %s", item.id, safe_name)
+                except GoogleAuthError as e:
+                    logger.warning("Drive auth failed for edit attachment %s: %s", safe_name, e)
+                except Exception as e:
+                    logger.error("Failed to upload edit attachment %s to Drive: %s", safe_name, e)
+                finally:
+                    local_path.unlink(missing_ok=True)
             attachment_count += 1
         except Exception as e:
             logger.error("Failed to save edit attachment locally: %s", e)

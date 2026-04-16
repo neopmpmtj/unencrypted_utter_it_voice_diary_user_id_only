@@ -25,6 +25,12 @@ from src.common.config import get_config
 from src.common.utils import ensure_directory
 from src.common.google_account.auth import verify_drive_permissions, GoogleAuthError
 from src.common.drive_upload import upload_file_to_user_drive_folder, upload_local_file_to_user_drive_folder
+from src.common.storage_local import (
+    ensure_local_storage_tree,
+    local_attachments_dir_for_item,
+    local_recording_user_dir,
+    sanitize_storage_filename,
+)
 from src.accounts.models import GlobalSettings, UserPreferences
 from src.text_rewrite.config_text_rewrite.text_rewrite_config import get_available_templates
 from src.ingestion.models import (
@@ -77,6 +83,7 @@ def recording_page(request):
         'allow_unlimited': config.recorder.allow_unlimited,
         'is_app_admin': getattr(request.user, 'is_app_admin', False),
         'show_inline_rewrite': show_inline_rewrite,
+        'save_attachments_to_local_filesystem': config.storage.save_attachments_to_local_filesystem,
         'rewrite_templates': get_available_templates() if show_inline_rewrite else [],
         'rewrite_api_url': reverse('text_rewrite:api_rewrite'),
         'recorder_config': {
@@ -101,7 +108,14 @@ def upload_to_drive_page(request):
     """
     Render the Google Drive file upload page.
     """
-    return render(request, 'recordings/upload.html')
+    cfg = get_config()
+    return render(
+        request,
+        "recordings/upload.html",
+        {
+            "save_attachments_to_local_filesystem": cfg.storage.save_attachments_to_local_filesystem,
+        },
+    )
 
 
 @login_required
@@ -126,14 +140,18 @@ def upload_file_to_drive(request):
             status=400,
         )
 
-    if not verify_drive_permissions(request.user):
-        return JsonResponse(
-            {
-                "error": "drive_not_connected",
-                "message": _("Connect Google account with Drive access to save files."),
-            },
-            status=403,
-        )
+    config = get_config()
+    use_local_filesystem = config.storage.save_attachments_to_local_filesystem
+
+    if not use_local_filesystem:
+        if not verify_drive_permissions(request.user):
+            return JsonResponse(
+                {
+                    "error": "drive_not_connected",
+                    "message": _("Connect Google account with Drive access to save files."),
+                },
+                status=403,
+            )
 
     occurred_at = timezone.now()
     title = f"File Upload {occurred_at.strftime('%Y-%m-%d %H:%M')}"
@@ -156,29 +174,61 @@ def upload_file_to_drive(request):
             )
 
             uploaded_infos = []
-            for uploaded in files_list:
-                result = upload_file_to_user_drive_folder(
-                    request.user,
-                    uploaded,
-                    subfolder_name=str(item.id),
-                )
-                ItemFile.objects.create(
-                    user=request.user,
-                    item=item,
-                    role=FileRole.ATTACHMENT,
-                    filename=result.get("name", getattr(uploaded, "name", "")),
-                    mime_type=getattr(uploaded, "content_type", "") or "",
-                    storage_url=result.get("webViewLink", ""),
-                    drive_folder_id=result.get("parent_folder_id", ""),
-                    bytes=getattr(uploaded, "size", None),
-                )
-                uploaded_infos.append(
-                    {
-                        "id": result.get("id"),
-                        "name": result.get("name"),
-                        "webViewLink": result.get("webViewLink"),
-                    }
-                )
+            if use_local_filesystem:
+                ensure_local_storage_tree(config)
+                for uploaded in files_list:
+                    safe_name = sanitize_storage_filename(
+                        getattr(uploaded, "name", "") or "file"
+                    )
+                    attach_dir = local_attachments_dir_for_item(
+                        config, request.user.id, item.id
+                    )
+                    local_path = attach_dir / safe_name
+                    with open(local_path, "wb") as f:
+                        for chunk in uploaded.chunks():
+                            f.write(chunk)
+                    resolved = str(local_path.resolve())
+                    ItemFile.objects.create(
+                        user=request.user,
+                        item=item,
+                        role=FileRole.ATTACHMENT,
+                        filename=safe_name,
+                        mime_type=getattr(uploaded, "content_type", "") or "",
+                        storage_url=resolved,
+                        drive_folder_id="",
+                        bytes=getattr(uploaded, "size", None),
+                    )
+                    uploaded_infos.append(
+                        {
+                            "id": "",
+                            "name": safe_name,
+                            "webViewLink": resolved,
+                        }
+                    )
+            else:
+                for uploaded in files_list:
+                    result = upload_file_to_user_drive_folder(
+                        request.user,
+                        uploaded,
+                        subfolder_name=str(item.id),
+                    )
+                    ItemFile.objects.create(
+                        user=request.user,
+                        item=item,
+                        role=FileRole.ATTACHMENT,
+                        filename=result.get("name", getattr(uploaded, "name", "")),
+                        mime_type=getattr(uploaded, "content_type", "") or "",
+                        storage_url=result.get("webViewLink", ""),
+                        drive_folder_id=result.get("parent_folder_id", ""),
+                        bytes=getattr(uploaded, "size", None),
+                    )
+                    uploaded_infos.append(
+                        {
+                            "id": result.get("id"),
+                            "name": result.get("name"),
+                            "webViewLink": result.get("webViewLink"),
+                        }
+                    )
     except GoogleAuthError as e:
         logger.warning(f"Drive auth failed for user {request.user.id}: {e}")
         return JsonResponse(
@@ -242,9 +292,12 @@ def upload_audio(request):
     else:
         extension = content_type.split('/')[-1] if '/' in content_type else 'webm'
     
-    # Create storage path (ensure directory exists)
+    # Temp audio base (transcribe-only / processing); permanent recordings use local root when enabled
     storage_base = ensure_directory(config.storage.audio_temp_path)
-    
+    use_local_filesystem = config.storage.save_attachments_to_local_filesystem
+    if use_local_filesystem:
+        ensure_local_storage_tree(config)
+
     transcribe_only = request.POST.get('transcribe_only', '').lower() in ('1', 'true', 'yes')
 
     if transcribe_only:
@@ -293,7 +346,11 @@ def upload_audio(request):
         # === NORMAL MODE: Full pipeline ===
         item_id = uuid.uuid4()
         filename = f"{item_id}.{extension}"
-        file_path = storage_base / str(request.user.id) / filename
+        if use_local_filesystem:
+            rec_dir = local_recording_user_dir(config, request.user.id)
+            file_path = rec_dir / filename
+        else:
+            file_path = storage_base / str(request.user.id) / filename
         ensure_directory(file_path.parent)
         
         # Save file
@@ -335,7 +392,7 @@ def upload_audio(request):
             role='original',
             filename=filename,
             mime_type=content_type,
-            storage_url=str(file_path),
+            storage_url=str(file_path.resolve()),
             bytes=audio_file.size,
         )
         
@@ -347,8 +404,43 @@ def upload_audio(request):
         attachment_count = 0
         attachment_files = request.FILES.getlist('files')
         if attachment_files:
-            if not verify_drive_permissions(request.user):
-                logger.warning(f"User {request.user.id} has no Drive access, skipping file attachments")
+            if use_local_filesystem:
+                attach_dir = local_attachments_dir_for_item(
+                    config, request.user.id, item_id
+                )
+                for uploaded_file in attachment_files:
+                    if not uploaded_file:
+                        continue
+                    try:
+                        safe_name = sanitize_storage_filename(
+                            uploaded_file.name or "file"
+                        )
+                        local_path = attach_dir / safe_name
+                        with open(local_path, "wb") as f:
+                            for chunk in uploaded_file.chunks():
+                                f.write(chunk)
+                        resolved = str(local_path.resolve())
+                        ItemFile.objects.create(
+                            user=request.user,
+                            item=item,
+                            role=FileRole.ATTACHMENT,
+                            filename=safe_name,
+                            mime_type=uploaded_file.content_type
+                            or "application/octet-stream",
+                            storage_url=resolved,
+                            drive_folder_id="",
+                            bytes=uploaded_file.size,
+                        )
+                        logger.info(
+                            f"Saved attachment on local disk for item {item.id}: {safe_name}"
+                        )
+                        attachment_count += 1
+                    except Exception as e:
+                        logger.error(f"Failed to save attachment locally: {e}")
+            elif not verify_drive_permissions(request.user):
+                logger.warning(
+                    f"User {request.user.id} has no Drive access, skipping file attachments"
+                )
             else:
                 attach_dir = storage_base / str(request.user.id) / 'attachments' / str(item_id)
                 ensure_directory(attach_dir)
@@ -589,9 +681,45 @@ def update_entry_content(request, item_id):
     if files_list:
         config = get_config()
         storage_base = ensure_directory(config.storage.audio_temp_path)
-
-        if not verify_drive_permissions(request.user):
-            logger.warning(f"User {request.user.id} has no Drive access, skipping edit-mode file attachments")
+        use_local_filesystem = config.storage.save_attachments_to_local_filesystem
+        if use_local_filesystem:
+            ensure_local_storage_tree(config)
+            attach_dir = local_attachments_dir_for_item(
+                config, request.user.id, item.id
+            )
+            for uploaded_file in files_list:
+                if not uploaded_file:
+                    continue
+                try:
+                    safe_name = sanitize_storage_filename(
+                        uploaded_file.name or "file"
+                    )
+                    local_path = attach_dir / safe_name
+                    with open(local_path, "wb") as f:
+                        for chunk in uploaded_file.chunks():
+                            f.write(chunk)
+                    resolved = str(local_path.resolve())
+                    ItemFile.objects.create(
+                        user=request.user,
+                        item=item,
+                        role=FileRole.ATTACHMENT,
+                        filename=safe_name,
+                        mime_type=uploaded_file.content_type
+                        or "application/octet-stream",
+                        storage_url=resolved,
+                        drive_folder_id="",
+                        bytes=uploaded_file.size,
+                    )
+                    logger.info(
+                        f"Saved edit-mode attachment on local disk for item {item.id}: {safe_name}"
+                    )
+                    attachment_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to save edit attachment locally: {e}")
+        elif not verify_drive_permissions(request.user):
+            logger.warning(
+                f"User {request.user.id} has no Drive access, skipping edit-mode file attachments"
+            )
         else:
             attach_dir = storage_base / str(request.user.id) / 'attachments' / str(item.id)
             ensure_directory(attach_dir)

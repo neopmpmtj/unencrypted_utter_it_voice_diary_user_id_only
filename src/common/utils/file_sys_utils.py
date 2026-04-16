@@ -167,13 +167,20 @@ def ensure_directory(directory_path: Union[str, Path]) -> Path:
         # Validate input
         if not str(directory_path).strip():
             raise ValueError("Directory path cannot be empty")
-        
-        if not directory_path.exists():
+
+        if directory_path.exists():
+            if not directory_path.is_dir():
+                raise NotADirectoryError(
+                    f"Path exists but is not a directory: {directory_path}"
+                )
+        else:
             directory_path.mkdir(parents=True, exist_ok=True)
-        
+
         return directory_path
+    except (NotADirectoryError, ValueError):
+        raise
     except Exception as e:
-        raise OSError(f"Failed to ensure directory '{directory_path}': {e}")
+        raise OSError(f"Failed to ensure directory '{directory_path}': {e}") from e
 
 
 def get_project_root() -> Path:

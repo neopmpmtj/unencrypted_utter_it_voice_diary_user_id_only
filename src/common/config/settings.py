@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from pydantic_settings import BaseSettings
-from pydantic import Field, AliasChoices
+from pydantic import Field, AliasChoices, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +282,47 @@ class StorageConfig(BaseSettings):
         default=7,
         description="Default audio retention period in days"
     )
-    
+    save_attachments_to_local_filesystem: bool = Field(
+        default=True,
+        description=(
+            "When true, persist attachments and stored recordings under local_storage_root "
+            "instead of uploading attachments to Google Drive"
+        ),
+    )
+    local_storage_root: str = Field(
+        default="",
+        description=(
+            "Absolute root directory for local attachments/recordings "
+            "(required when save_attachments_to_local_filesystem is true). "
+            "Env: STORAGE_LOCAL_STORAGE_ROOT."
+        ),
+    )
+    local_attachments_subdir: str = Field(
+        default="attachments",
+        description="Subdirectory under local_storage_root for attachment files",
+    )
+    local_recordings_subdir: str = Field(
+        default="recordings",
+        description="Subdirectory under local_storage_root for persisted original recordings",
+    )
+
+    @model_validator(mode="after")
+    def _require_absolute_local_root_when_enabled(self):
+        if not self.save_attachments_to_local_filesystem:
+            return self
+        root = (self.local_storage_root or "").strip()
+        if not root:
+            raise ValueError(
+                "local_storage_root (STORAGE_LOCAL_STORAGE_ROOT or LOCAL_STORAGE_ROOT) is required "
+                "when save_attachments_to_local_filesystem is true"
+            )
+        p = Path(root).expanduser()
+        if not p.is_absolute():
+            raise ValueError(
+                "local_storage_root must be an absolute path when save_attachments_to_local_filesystem is true"
+            )
+        return self
+
     class Config:
         env_prefix = "STORAGE_"
 

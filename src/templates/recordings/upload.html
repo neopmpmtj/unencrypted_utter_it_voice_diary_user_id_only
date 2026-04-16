@@ -54,6 +54,7 @@
 
   var uploadUrl = '{% url "recordings:upload_to_drive" %}';
   var profileUrl = '{% url "accounts:profile" %}';
+  var saveAttachmentsLocally = {{ save_attachments_to_local_filesystem|yesno:"true,false" }};
 
   var uploadArea = document.getElementById('uploadArea');
   var fileInput  = document.getElementById('fileInput');
@@ -143,7 +144,7 @@
           resultText.textContent = count + ' {% trans "file(s) uploaded successfully" %}';
           resultContainer.classList.remove('hidden');
           clearForm();
-        } else if (res.status === 403 && res.data.error === 'drive_not_connected') {
+        } else if (!saveAttachmentsLocally && res.status === 403 && res.data.error === 'drive_not_connected') {
           setAllStatus('{% trans "Connect Drive" %}', 'text-xs text-destructive shrink-0');
           errorText.innerHTML = '{% trans "Connect Google Drive to save files." %} <a href="' + profileUrl + '" class="text-accent hover:underline">{% trans "Connect in settings" %}</a>.';
           errorContainer.classList.remove('hidden');

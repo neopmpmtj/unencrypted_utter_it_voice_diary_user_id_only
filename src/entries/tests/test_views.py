@@ -4,7 +4,9 @@ Tests for entries views: entry_delete_api, entries_list_api, and entries_page.
 
 import json
 import re
+import shutil
 import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -740,6 +742,43 @@ class EntryEditApiTests(TestCase):
         item.refresh_from_db()
         attachments = ItemFile.objects.filter(item=item, role=FileRole.ATTACHMENT)
         self.assertEqual(attachments.count(), 3, "DB attachment count must match files uploaded")
+
+    @patch("src.entries.views.get_config")
+    def test_entry_edit_api_multipart_local_filesystem_attachments(
+        self, mock_get_config
+    ):
+        """When local filesystem storage is enabled, attachments stay on disk with absolute paths."""
+        root = Path(tempfile.mkdtemp())
+        try:
+            mock_storage = mock_get_config.return_value.storage
+            mock_storage.audio_temp_path = tempfile.gettempdir()
+            mock_storage.save_attachments_to_local_filesystem = True
+            mock_storage.local_storage_root = str(root)
+            mock_storage.local_attachments_subdir = "attachments"
+            mock_storage.local_recordings_subdir = "recordings"
+
+            item = self._create_entry(title="Original", content="Original content")
+            url = reverse("entries:api_edit", args=[item.id])
+            f1 = SimpleUploadedFile(
+                "local1.pdf", b"a" * 100, content_type="application/pdf"
+            )
+            multipart_data = {
+                "content_text": "Updated with local attachment",
+                "title": "Updated",
+                "create_new": "false",
+                "files": [f1],
+            }
+            response = self.client.post(url, data=multipart_data)
+            self.assertEqual(response.status_code, 200)
+            data = json.loads(response.content)
+            self.assertEqual(data.get("attachment_count"), 1)
+            att = ItemFile.objects.filter(item=item, role=FileRole.ATTACHMENT).first()
+            self.assertIsNotNone(att)
+            self.assertTrue(Path(att.storage_url).is_absolute())
+            self.assertTrue(Path(att.storage_url).exists())
+            self.assertEqual(att.drive_folder_id, "")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
 
 class EntriesPageTests(TestCase):

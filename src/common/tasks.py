@@ -28,9 +28,16 @@ def upload_attachments_to_drive_task(
             ``itemfile_id``, ``local_path``, ``filename``, ``mime_type``, ``size``.
     """
     from src.accounts.models import CustomUser
+    from src.common.config import get_config
     from src.common.drive_upload import upload_local_file_to_user_drive_folder
     from src.common.google_account.auth import GoogleAuthError
     from src.ingestion.models import IngestItem, ItemFile
+
+    if get_config().storage.save_attachments_to_local_filesystem:
+        logger.info(
+            "Skipping Drive attachment upload task (local filesystem storage enabled)"
+        )
+        return
 
     try:
         user = CustomUser.objects.get(id=user_id)

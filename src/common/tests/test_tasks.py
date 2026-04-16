@@ -8,7 +8,7 @@ when Drive upload succeeds (does not create duplicate ItemFiles).
 import tempfile
 import uuid
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -95,3 +95,38 @@ class UploadAttachmentsToDriveTaskTestCase(TestCase):
 
         if local_path.exists():
             local_path.unlink(missing_ok=True)
+
+    @override_settings(
+        AUDIO_TEMP_PATH=tempfile.gettempdir(),
+        STORAGE_AUDIO_TEMP_PATH=tempfile.gettempdir(),
+    )
+    @patch("src.common.config.get_config")
+    @patch("src.common.drive_upload.upload_local_file_to_user_drive_folder")
+    def test_task_skips_when_local_filesystem_enabled(self, mock_upload, mock_get_config):
+        """Local storage mode must not call Drive upload."""
+        mock_cfg = MagicMock()
+        mock_cfg.storage.save_attachments_to_local_filesystem = True
+        mock_get_config.return_value = mock_cfg
+
+        itemfile = self._create_itemfile("doc.pdf", storage_url="")
+        local_path = Path(tempfile.gettempdir()) / "skip_drive.pdf"
+        local_path.write_bytes(b"x")
+
+        upload_attachments_to_drive_task(
+            str(self.item.id),
+            self.user.id,
+            [
+                {
+                    "itemfile_id": str(itemfile.id),
+                    "local_path": str(local_path),
+                    "filename": "doc.pdf",
+                    "mime_type": "application/pdf",
+                    "size": 1,
+                }
+            ],
+        )
+
+        mock_upload.assert_not_called()
+        itemfile.refresh_from_db()
+        self.assertEqual(itemfile.storage_url, "")
+        local_path.unlink(missing_ok=True)

@@ -16,8 +16,14 @@ from django.views.decorators.http import require_POST, require_http_methods
 from django.contrib.auth.decorators import login_required
 from django.utils.translation import gettext as _
 
+from src.common.config import get_config
 from src.common.google_account.auth import verify_drive_permissions
 from src.common.drive_upload import upload_file_to_user_drive_folder
+from src.common.storage_local import (
+    ensure_local_storage_tree,
+    local_attachments_dir_for_item,
+    sanitize_storage_filename,
+)
 from src.ingestion.models import ItemFile, FileRole
 
 from .services import (
@@ -42,9 +48,11 @@ def text_input_page(request):
         show_inline_rewrite = prefs.show_inline_rewrite
     except UserPreferences.DoesNotExist:
         show_inline_rewrite = True
+    cfg = get_config()
     return render(request, 'text_input/index.html', {
         'is_app_admin': getattr(request.user, 'is_app_admin', False),
         'show_inline_rewrite': show_inline_rewrite,
+        'save_attachments_to_local_filesystem': cfg.storage.save_attachments_to_local_filesystem,
         'rewrite_templates': get_available_templates() if show_inline_rewrite else [],
         'rewrite_api_url': reverse('text_rewrite:api_rewrite'),
     })
@@ -130,7 +138,14 @@ def ingest_text(request):
     if occurred_at is None:
         occurred_at = timezone.now()
 
-    if files_list and not verify_drive_permissions(request.user):
+    config = get_config()
+    use_local_filesystem = config.storage.save_attachments_to_local_filesystem
+
+    if (
+        files_list
+        and not use_local_filesystem
+        and not verify_drive_permissions(request.user)
+    ):
         return JsonResponse(
             {
                 "error": "drive_not_connected",
@@ -177,21 +192,40 @@ def ingest_text(request):
                 status=500,
             )
         
-        # Now upload files to entry-specific subfolder
+        # Persist attachments (Drive or local filesystem)
         try:
-            for f in files_list:
-                result = upload_file_to_user_drive_folder(
-                    request.user, f, subfolder_name=str(item.id)
-                )
-                uploaded_file_infos.append({
-                    "name": result["name"],
-                    "webViewLink": result["webViewLink"],
-                    "drive_folder_id": result["parent_folder_id"],
-                    "size": getattr(f, "size", None),
-                    "content_type": getattr(f, "content_type", "") or "",
-                })
+            if use_local_filesystem:
+                ensure_local_storage_tree(config)
+                for f in files_list:
+                    safe_name = sanitize_storage_filename(f.name or "file")
+                    attach_dir = local_attachments_dir_for_item(
+                        config, request.user.id, item.id
+                    )
+                    local_path = attach_dir / safe_name
+                    with open(local_path, "wb") as out:
+                        for chunk in f.chunks():
+                            out.write(chunk)
+                    uploaded_file_infos.append({
+                        "name": safe_name,
+                        "storage_url": str(local_path.resolve()),
+                        "drive_folder_id": "",
+                        "size": getattr(f, "size", None),
+                        "content_type": getattr(f, "content_type", "") or "",
+                    })
+            else:
+                for f in files_list:
+                    result = upload_file_to_user_drive_folder(
+                        request.user, f, subfolder_name=str(item.id)
+                    )
+                    uploaded_file_infos.append({
+                        "name": result["name"],
+                        "storage_url": result["webViewLink"],
+                        "drive_folder_id": result["parent_folder_id"],
+                        "size": getattr(f, "size", None),
+                        "content_type": getattr(f, "content_type", "") or "",
+                    })
         except Exception as e:
-            logger.exception(f"Drive upload failed during text ingest: {e}")
+            logger.exception(f"Attachment save failed during text ingest: {e}")
             return JsonResponse(
                 {"error": "upload_failed", "message": _("An unexpected error occurred")},
                 status=500,
@@ -238,7 +272,7 @@ def ingest_text(request):
             role=FileRole.ATTACHMENT,
             filename=info["name"],
             mime_type=info["content_type"] or "",
-            storage_url=info["webViewLink"],
+            storage_url=info["storage_url"],
             drive_folder_id=info.get("drive_folder_id", ""),
             bytes=info.get("size"),
         )

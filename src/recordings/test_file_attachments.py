@@ -8,6 +8,7 @@ Tests cover:
 
 import json
 import logging
+import shutil
 import tempfile
 import uuid
 from io import BytesIO
@@ -303,6 +304,76 @@ class RecorderFileAttachmentsTestCase(TestCase):
         self.assertEqual(attachment.mime_type, 'application/pdf')
         self.assertIsNotNone(attachment.storage_url)
 
+    @patch("src.recordings.views.get_config")
+    @patch("src.recordings.views.upload_local_file_to_user_drive_folder")
+    @patch("src.recordings.views.verify_drive_permissions")
+    @patch("src.recordings.views.process_audio_ingest")
+    @patch("src.recordings.views.AudioChunker")
+    @override_settings(
+        AUDIO_TEMP_PATH=tempfile.gettempdir(),
+        STORAGE_AUDIO_TEMP_PATH=tempfile.gettempdir(),
+    )
+    def test_upload_audio_local_filesystem_saves_original_and_attachments(
+        self,
+        mock_chunker_cls,
+        mock_process_task,
+        mock_verify,
+        mock_upload_drive,
+        mock_get_config,
+    ):
+        """Local mode: original under recordings/, attachments on disk; no Drive calls."""
+        root = Path(tempfile.mkdtemp())
+        try:
+            mock_storage = MagicMock()
+            mock_storage.audio_temp_path = tempfile.gettempdir()
+            mock_storage.save_attachments_to_local_filesystem = True
+            mock_storage.local_storage_root = str(root)
+            mock_storage.local_attachments_subdir = "attachments"
+            mock_storage.local_recordings_subdir = "recordings"
+            mock_cfg = mock_get_config.return_value
+            mock_cfg.storage = mock_storage
+            mock_cfg.recorder.max_file_size_mb = 100
+
+            mock_chunker_cls.return_value.get_audio_duration.return_value = 1.0
+
+            request = self.factory.post("/voice/upload/")
+            request.user = self.user
+            request.FILES["audio"] = self.create_audio_file()
+            request.FILES.setlist(
+                "files",
+                [
+                    self.create_attachment_file("local1.pdf"),
+                    self.create_attachment_file("local2.pdf"),
+                ],
+            )
+            request.POST = {"template_type": "plain"}
+
+            response = upload_audio(request)
+
+            self.assertEqual(response.status_code, 200)
+            data = json.loads(response.content)
+            self.assertEqual(data["attachment_count"], 2)
+
+            mock_upload_drive.assert_not_called()
+            mock_verify.assert_not_called()
+
+            item = IngestItem.objects.get(id=uuid.UUID(data["item_id"]))
+            original = ItemFile.objects.get(item=item, role=FileRole.ORIGINAL)
+            self.assertIn(str(root), original.storage_url)
+            self.assertIn("recordings", original.storage_url)
+            self.assertIn(str(self.user.id), original.storage_url)
+            self.assertTrue(Path(original.storage_url).exists())
+
+            attachments = ItemFile.objects.filter(item=item, role=FileRole.ATTACHMENT)
+            self.assertEqual(attachments.count(), 2)
+            for att in attachments:
+                self.assertEqual(att.drive_folder_id, "")
+                self.assertIn(str(root), att.storage_url)
+                self.assertIn("attachments", att.storage_url)
+                self.assertTrue(Path(att.storage_url).exists())
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
 
 class BatchFileUploadToDriveTestCase(TestCase):
     """Tests for batch file upload to Google Drive with DB tracking."""
@@ -396,6 +467,44 @@ class BatchFileUploadToDriveTestCase(TestCase):
         self.assertEqual(response.status_code, 403)
         data = json.loads(response.content)
         self.assertEqual(data["error"], "drive_not_connected")
+
+    @patch("src.recordings.views.get_config")
+    @patch("src.recordings.views.verify_drive_permissions")
+    @patch("src.recordings.views.upload_file_to_user_drive_folder")
+    def test_upload_files_local_filesystem_no_drive(
+        self, mock_upload_drive, mock_verify, mock_get_config
+    ):
+        """Local mode: batch file upload persists under local root without Drive."""
+        root = Path(tempfile.mkdtemp())
+        try:
+            mock_storage = MagicMock()
+            mock_storage.save_attachments_to_local_filesystem = True
+            mock_storage.local_storage_root = str(root)
+            mock_storage.local_attachments_subdir = "attachments"
+            mock_storage.local_recordings_subdir = "recordings"
+            mock_get_config.return_value.storage = mock_storage
+
+            request = self.factory.post("/voice/upload-to-drive/")
+            request.user = self.user
+            request.FILES.setlist(
+                "files", [self._make_file("local_a.pdf"), self._make_file("local_b.txt")]
+            )
+
+            response = upload_file_to_drive(request)
+
+            self.assertEqual(response.status_code, 201)
+            mock_verify.assert_not_called()
+            mock_upload_drive.assert_not_called()
+
+            data = json.loads(response.content)
+            item = IngestItem.objects.get(id=data["item_id"])
+            for att in ItemFile.objects.filter(item=item):
+                self.assertEqual(att.drive_folder_id, "")
+                self.assertTrue(Path(att.storage_url).is_file())
+                self.assertIn(str(root), att.storage_url)
+                self.assertIn("attachments", att.storage_url)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
     @patch("src.recordings.views.verify_drive_permissions")
     @patch("src.recordings.views.upload_file_to_user_drive_folder")

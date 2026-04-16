@@ -15,6 +15,7 @@ from django.views.decorators.http import require_GET
 
 from src.accounts.audio_retention_config import get_audio_retention_hours
 from src.common.config import get_config
+from src.common.storage_local import is_audio_storage_path_allowed_for_user
 from src.ingestion.models import IngestItem, FileRole, IngestStatus
 
 
@@ -60,9 +61,10 @@ def list_recordings(request):
         file_path = Path(original_file.storage_url)
         if not file_path.is_absolute():
             file_path = audio_base / file_path
-        try:
-            file_path.resolve().relative_to(audio_base)
-        except ValueError:
+        file_path = file_path.resolve()
+        if not is_audio_storage_path_allowed_for_user(
+            config, file_path, request.user.id
+        ):
             continue
         if not file_path.exists():
             continue
@@ -116,9 +118,9 @@ def serve_audio(request, item_id):
         file_path = audio_base / file_path
     file_path = file_path.resolve()
 
-    try:
-        file_path.resolve().relative_to(audio_base)
-    except ValueError:
+    if not is_audio_storage_path_allowed_for_user(
+        config, file_path, request.user.id
+    ):
         raise Http404
     if not file_path.exists():
         raise Http404
