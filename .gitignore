@@ -1,8 +1,3 @@
-# git merge --no-ff manage-entries -m "merge manage-entries into main"
-# Tailwind CLI binary (downloaded by django-tailwind-cli at build/setup time)
-.django_tailwind_cli/
-
-# git merge --no-ff manage-entries -m "merge manage-entries into main"
 
 .vscode/
 .github/
