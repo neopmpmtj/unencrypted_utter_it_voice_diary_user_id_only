@@ -12,13 +12,13 @@ class VoiceDiaryRecorder {
      * 
      * @param {Object} options - Configuration options
      * @param {string} options.uploadUrl - Server endpoint for audio upload (default: '/voice/upload/')
-     * @param {number} options.maxDuration - Maximum recording duration in seconds (default: 1200)
+     * @param {number} options.maxDuration - Maximum recording duration in seconds (default: 600)
      * @param {number} options.maxFileSize - Maximum file size in bytes (default: 100MB, matches RECORDER_MAX_FILE_SIZE_MB)
      */
     constructor(options = {}) {
         this.uploadUrl = options.uploadUrl || '/voice/upload/';
         this.wsBaseUrl = options.wsBaseUrl || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
-        this.maxDuration = options.maxDuration ?? 1200;
+        this.maxDuration = options.maxDuration ?? 600;
         this.maxFileSize = options.maxFileSize ?? 100 * 1024 * 1024;
         
         // State management
