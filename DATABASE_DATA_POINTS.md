@@ -1,6 +1,6 @@
 # Database Data Points Reference
 
-This document lists all database tables and their fields, organized by module. Use it as a reference when building dashboards or monitoring tools.
+This document lists application-owned database tables and their fields, organized by module, aligned with the Django models under `src/`. It is not an exhaustive list of every table in PostgreSQL (for example `django_*`, `auth_*`, and `sessions` are omitted).
 
 ---
 
@@ -49,23 +49,8 @@ This document lists all database tables and their fields, organized by module. U
 | encrypted_google_refresh_token | text | Encrypted refresh token |
 | encrypted_google_token_expiry | text | Encrypted expiry timestamp |
 | google_token_scopes | text | JSON array of granted scopes |
-| encrypted_user_encryption_key | text | Encrypted personal encryption key |
 | created_at | datetime | Creation time |
 | updated_at | datetime | Last update |
-
-### UserEncryptionRotation (`accounts_userencryptionrotation`)
-| Field | Type | Description |
-|-------|------|--------------|
-| id | PK | Auto-generated |
-| user_id | FK | → CustomUser |
-| status | str | `in_progress`, `complete`, `failed` |
-| action | str | `set`, `change`, `remove` |
-| previous_encrypted_key | text | Previous key (recovery) |
-| items_total | int | Total items to process |
-| items_processed | int | Items processed |
-| started_at | datetime | Start time |
-| finished_at | datetime | Completion time |
-| error_message | text | Error details |
 
 ### UserPreferences (`accounts_userpreferences`)
 | Field | Type | Description |
@@ -152,10 +137,9 @@ This document lists all database tables and their fields, organized by module. U
 | source_filename | str | Original filename when from attachment |
 | occurred_at | datetime | When event happened |
 | ingested_at | datetime | When ingested |
-| title | str | Title (encrypted) |
-| content_text | text | Transcript/content (encrypted) |
-| summary_text | text | Summary (encrypted) |
-| encrypted_with_user_key | bool | Use user vs server key for decrypt |
+| title | str | Title (plaintext in DB) |
+| content_text | text | Transcript/content (plaintext in DB) |
+| summary_text | text | Summary (plaintext in DB) |
 | is_deleted | bool | Soft delete flag |
 | deleted_at | datetime | Deletion time |
 | audio_duration_seconds | float | Original audio duration |
@@ -235,8 +219,8 @@ Unified retrieval table: one row per IngestItem. Combines embeddings, keywords, 
 | time_keys | JSON | Time dimension keys list |
 | governance_key | text | Governance taxonomy key |
 | entity_ids | JSON | EntityCatalog IDs list |
-| entity_names_normalized | text | Encrypted; plaintext: JSON list of normalized entity names |
-| entity_roles | text | Encrypted; plaintext: JSON list of entity roles |
+| entity_names_normalized | text | JSON string (list of normalized entity names) |
+| entity_roles | text | JSON string (list of entity roles) |
 | occurred_at | datetime | Event time |
 | ingested_at | datetime | Ingestion time |
 | detected_language | str | ISO language code |
@@ -244,7 +228,7 @@ Unified retrieval table: one row per IngestItem. Combines embeddings, keywords, 
 | summary_text_searchable | text | Plaintext summary for search |
 | embedding_ready_text | text | Text used to compute embedding |
 | summary | text | LLM-generated summary |
-| keywords | text | Encrypted; plaintext: JSON keyword list |
+| keywords | text | JSON string (keyword list) |
 | list_items_flat | text | Flattened list items |
 | financial_items_flat | text | Flattened financial items |
 | todo_items_flat | text | Flattened to-do items |
@@ -264,7 +248,7 @@ Unified retrieval table: one row per IngestItem. Combines embeddings, keywords, 
 |-------|------|--------------|
 | id | UUID | Primary key |
 | user_id | FK | → CustomUser |
-| title | text | Session title (encrypted) |
+| title | text | Session title |
 | created_at | datetime | Creation time |
 | updated_at | datetime | Last update |
 
@@ -273,7 +257,7 @@ Unified retrieval table: one row per IngestItem. Combines embeddings, keywords, 
 |-------|------|--------------|
 | id | UUID | Primary key |
 | session_id | FK | → ChatSession |
-| content | text | Message content (encrypted) |
+| content | text | Message content |
 | sequence_index | int | Per-session ordering |
 | created_at | datetime | Creation time |
 
@@ -282,8 +266,8 @@ Unified retrieval table: one row per IngestItem. Combines embeddings, keywords, 
 |-------|------|--------------|
 | id | UUID | Primary key |
 | session_id | FK | → ChatSession |
-| content | text | Message content (encrypted) |
-| source_entries | text | Encrypted; plaintext: JSON list of referenced entry IDs |
+| content | text | Message content |
+| source_entries | text | JSON string (list of referenced entry metadata dicts) |
 | sequence_index | int | Per-session ordering |
 | status | str | `read`, `unread`; default `read` |
 | metadata | JSON | Future-proof: `performed_actions`, `tool_calls`, etc.; default `{}` |
@@ -397,6 +381,7 @@ The `batch_calendar` app owns `CalendarEvent` and `CalendarWatchChannel`; they u
 | id | UUID | Primary key |
 | user_id | FK | → CustomUser |
 | source_item_id | FK | → IngestItem (nullable) |
+| created_by_id | FK | → CustomUser (nullable; manual lists) |
 | list_name | str | Inferred list name |
 | list_context | text | Optional context |
 | llm_response | JSON | Raw LLM response |
@@ -433,6 +418,7 @@ The `batch_calendar` app owns `CalendarEvent` and `CalendarWatchChannel`; they u
 | id | UUID | Primary key |
 | user_id | FK | → CustomUser |
 | source_item_id | FK | → IngestItem (nullable) |
+| created_by_id | FK | → CustomUser (nullable; manual records) |
 | record_name | str | Inferred record name |
 | record_context | text | Optional context |
 | llm_response | JSON | Raw LLM response |
@@ -485,6 +471,7 @@ The `batch_calendar` app owns `CalendarEvent` and `CalendarWatchChannel`; they u
 | id | UUID | Primary key |
 | user_id | FK | → CustomUser |
 | source_item_id | FK | → IngestItem (nullable) |
+| created_by_id | FK | → CustomUser (nullable; manual records) |
 | record_name | str | Inferred record name |
 | record_context | text | Optional context |
 | llm_response | JSON | Raw LLM response |
@@ -512,7 +499,7 @@ The `batch_calendar` app owns `CalendarEvent` and `CalendarWatchChannel`; they u
 | topic | str | Topic category |
 | subtopic | str | Finer granularity |
 | recurrence_rule | str | Recurrence pattern |
-| entity_id | FK | → EntityCatalog (nullable) |
+| entity_id | FK | → EntityCatalog (nullable); Django field `entity` |
 | entity_name | str | Denormalized entity name |
 | entity_type | str | Denormalized entity type |
 | item_data | JSON | Full LLM dict |
@@ -561,9 +548,9 @@ The `batch_calendar` app owns `CalendarEvent` and `CalendarWatchChannel`; they u
 | contains_time_reference | bool | Has time reference |
 | contains_multiple_items | bool | Has multiple items |
 | raw_output | JSON | Raw triage output |
+| created_at | datetime | Creation time |
 | is_deleted | bool | Soft delete |
 | deleted_at | datetime | Deletion time |
-| created_at | datetime | Creation time |
 
 ---
 
@@ -773,13 +760,48 @@ Maps taxonomy key patterns to downstream parser actions. Supports prefix matchin
 | processed_at | datetime | When processed |
 | payload | JSON | Raw webhook payload |
 
+*Note: the physical table name is `billing_stripewebokevent` (as set in Django `Meta.db_table`).*
+
+---
+
+## GIGO monitor (`gigo_`)
+
+Input-quality metrics and nudge logging (`src.gigo`).
+
+### GigoEntry (`gigo_gigoentry`)
+| Field | Type | Description |
+|-------|------|--------------|
+| id | UUID | Primary key |
+| user_id | FK | → CustomUser |
+| ingest_item_id | FK | → IngestItem (nullable) |
+| item_type | str | `audio`, `text` |
+| word_count | int | Word count |
+| rank | str | `low`, `medium`, `high` |
+| created_at | datetime | Creation time |
+
+### GigoUserState (`gigo_gigouserstate`)
+| Field | Type | Description |
+|-------|------|--------------|
+| id | UUID | Primary key |
+| user_id | FK | → CustomUser (OneToOne) |
+| consecutive_low_count | int | Consecutive low-rank inputs |
+| alert_pending | bool | Nudge alert pending |
+| last_updated | datetime | Last update |
+
+### GigoNudgeLog (`gigo_gigonudgelog`)
+| Field | Type | Description |
+|-------|------|--------------|
+| id | UUID | Primary key |
+| user_id | FK | → CustomUser |
+| created_at | datetime | When nudge was shown |
+
 ---
 
 ## Module Summary
 
 | Module | Tables | Purpose |
 |--------|--------|---------|
-| **accounts** | 8 | Users, profiles, secrets, preferences, feature config, API usage |
+| **accounts** | 7 | Users, profiles, secrets, preferences, feature config, API usage |
 | **ingestion** | 6 | Diary entries, files, edit logs, jobs, Gmail raw |
 | **retrieval** | 4 | Unified retrieval projection, chat (session, user/assistant messages) |
 | **batch_calendar** | 4 | Batch requests, batch events, CalendarEvent, CalendarWatchChannel (legacy tables) |
@@ -789,6 +811,7 @@ Maps taxonomy key patterns to downstream parser actions. Supports prefix matchin
 | **intent_router** | 1 | Item triage results |
 | **classification** | 9 | Taxonomy hierarchy, classification runs, selections, entities, permissions, parser routes |
 | **billing** | 3 | Stripe customer, subscription, webhook events |
+| **gigo** | 3 | Input quality metrics, per-user GIGO state, nudge log |
 
 ---
 
@@ -804,3 +827,4 @@ Maps taxonomy key patterns to downstream parser actions. Supports prefix matchin
 - **TaxonomyParserRoute** enables data-driven dispatch to downstream parsers (calendar, list, financial, todo) based on taxonomy keys.
 - **ManagedListProjection** provides a cross-list denormalized index for unified search across shopping lists, todos, and financial items.
 - **ItemTriageResult** stores pre-classification routing decisions for pipeline optimization.
+- **GigoEntry**, **GigoUserState**, and **GigoNudgeLog** track input-quality metrics and nudges per user (**GigoEntry** may link to **IngestItem**).
