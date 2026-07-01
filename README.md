@@ -24,7 +24,7 @@ All first-party Django apps live under `src/`:
 | `translation` | Text translation |
 | `lang_detect` | Language detection |
 | `entries` | Diary entry models and views |
-| `text_input` | Non-voice text input path |
+| `text_input` | Non-voice text input path ([docs](src/text_input/TEXT_INPUT_README.md)) |
 | `classification` | LLM-based content classification and routing taxonomy |
 | `intent_router` | Intent triage / utterance routing |
 | `list_parser` | Structured list extraction from text |
@@ -110,6 +110,23 @@ celery -A src.utter_it worker -l info
 ```bash
 celery -A src.utter_it beat -l info
 ```
+
+### 5. Text input (web or CLI)
+
+Text entries use the same ingest and classification pipeline as voice. Full documentation: [src/text_input/TEXT_INPUT_README.md](src/text_input/TEXT_INPUT_README.md).
+
+**Web:** log in and open `/text-input/`.
+
+**CLI** (no browser; requires Celery worker running):
+
+```bash
+python manage.py ingest_text --email your@email.com --text "Your diary entry"
+
+# Or pipe body from stdin
+echo "Your diary entry" | python manage.py ingest_text --email your@email.com
+```
+
+Optional flags: `--user-id`, `--template-type plain|list`, `--title`, `--occurred-at` (ISO 8601).
 
 ## Running tests
 
