@@ -131,6 +131,26 @@ def add_label_to_message(user, msg_id: str, label_id: str) -> None:
     ).execute()
 
 
+def mark_read_and_archive(user, msg_id: str) -> None:
+    """
+    Mark a Gmail message as read and remove it from the inbox (archive).
+
+    Removes the INBOX label (archives) and the UNREAD label (marks as read).
+    Call this only after the message has been successfully processed, so the
+    raw email no longer clutters the inbox.
+
+    Args:
+        user: Django User instance
+        msg_id: Gmail message ID
+    """
+    service = get_authenticated_service(user, "gmail")
+    service.users().messages().modify(
+        userId="me",
+        id=msg_id,
+        body={"removeLabelIds": ["INBOX", "UNREAD"]},
+    ).execute()
+
+
 def search_inbox_messages(user, query: str, max_results: int = 100) -> List[str]:
     """
     Search INBOX for messages matching the Gmail query.

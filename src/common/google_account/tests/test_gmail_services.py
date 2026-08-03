@@ -11,6 +11,7 @@ from src.common.google_account.gmail_services import (
     message_has_attachments,
     get_or_create_label,
     add_label_to_message,
+    mark_read_and_archive,
 )
 
 User = get_user_model()
@@ -246,5 +247,26 @@ class AddLabelToMessageTests(TestCase):
             userId="me",
             id="msg1",
             body={"addLabelIds": ["Label_123"]},
+        )
+        mock_modify.execute.assert_called_once()
+
+
+class MarkReadAndArchiveTests(TestCase):
+    """Test mark_read_and_archive calls Gmail modify API to remove INBOX + UNREAD."""
+
+    @patch("src.common.google_account.gmail_services.get_authenticated_service")
+    def test_calls_modify_with_remove_label_ids(self, mock_get_service):
+        mock_service = MagicMock()
+        mock_modify = MagicMock()
+        mock_service.users.return_value.messages.return_value.modify.return_value = mock_modify
+        mock_get_service.return_value = mock_service
+
+        user = User.objects.create_user(email="archive@example.com", password="Pass123")
+        mark_read_and_archive(user, "msg1")
+
+        mock_service.users.return_value.messages.return_value.modify.assert_called_once_with(
+            userId="me",
+            id="msg1",
+            body={"removeLabelIds": ["INBOX", "UNREAD"]},
         )
         mock_modify.execute.assert_called_once()

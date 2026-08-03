@@ -18,6 +18,7 @@ from src.common.google_account.gmail_services import (
     get_pdf_attachments,
     get_or_create_label,
     add_label_to_message,
+    mark_read_and_archive,
 )
 from src.common.logging_utils.logging_config import get_logger
 from src.ingestion.tasks import log_api_usage
@@ -209,6 +210,8 @@ def process_invoice_messages(user) -> dict:
     ingest_items_skipped = 0
 
     for msg_id in msg_ids:
+        msg_ok = True
+        msg_created = False
         try:
             if not message_has_attachments(user, msg_id):
                 continue
@@ -231,6 +234,7 @@ def process_invoice_messages(user) -> dict:
                             user, parsed, msg_id, att["filename"],
                         )
                         if ingest_item:
+                            msg_created = True
                             ingest_items_created += 1
                             try:
                                 add_label_to_message(user, msg_id, label_id)
@@ -248,6 +252,10 @@ def process_invoice_messages(user) -> dict:
                             )
                             logger.warning(warning)
                             errors.append(warning)
+                    else:
+                        # LLM returned an error for this attachment — keep the
+                        # message in the inbox for retry/inspection.
+                        msg_ok = False
 
                     log_api_usage(
                         user, model, "input_tokens", usage.get("input_tokens", 0),
@@ -266,9 +274,21 @@ def process_invoice_messages(user) -> dict:
                     })
                     pdfs_parsed += 1
                 except Exception as exc:
+                    msg_ok = False
                     err = f"Parse failed for {att['filename']} (msg {msg_id}): {exc}"
                     logger.error(err)
                     errors.append(err)
+
+            # Archive the email (mark read + move out of inbox) only when the
+            # whole message ingested cleanly with at least one expense created.
+            if msg_ok and msg_created:
+                try:
+                    mark_read_and_archive(user, msg_id)
+                    logger.info("Archived processed invoice email %s", msg_id)
+                except Exception as exc:
+                    logger.warning(
+                        "Could not mark read/archive message %s: %s", msg_id, exc
+                    )
 
         except Exception as exc:
             err = f"Error processing message {msg_id}: {exc}"

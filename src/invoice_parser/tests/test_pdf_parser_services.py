@@ -274,3 +274,108 @@ class ProcessInvoiceMessagesTestCase(TestCase):
 
         mock_get_label.assert_called_once_with(self.user, "UtterIt/InvoiceParsed")
         mock_add_label.assert_called_once_with(self.user, "msg1", "Label_123")
+
+
+class ProcessInvoiceMessagesArchiveTests(TestCase):
+    """Test that successfully ingested emails are archived (marked read + out of inbox)."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="archive_pipeline@example.com",
+            password="testpass123",
+        )
+        self.user.save()
+
+    @patch("src.invoice_parser.pdf_parser.services.mark_read_and_archive")
+    @patch("src.invoice_parser.pdf_parser.services.add_label_to_message")
+    @patch("src.invoice_parser.pdf_parser.services.get_or_create_label")
+    @patch("src.invoice_parser.pdf_parser.services.log_api_usage")
+    @patch("src.invoice_parser.pdf_parser.services.persist_invoice_to_db")
+    @patch("src.invoice_parser.pdf_parser.services.parse_pdf_invoice")
+    @patch("src.invoice_parser.pdf_parser.services.get_pdf_attachments")
+    @patch("src.invoice_parser.pdf_parser.services.message_has_attachments")
+    @patch("src.invoice_parser.pdf_parser.services.search_inbox_messages")
+    @patch("src.invoice_parser.pdf_parser.services.verify_gmail_permissions")
+    def test_archives_message_on_success(
+        self, mock_verify, mock_search, mock_has_att, mock_get_pdfs, mock_parse,
+        mock_persist, mock_log, mock_get_label, mock_add_label, mock_archive,
+    ):
+        mock_verify.return_value = True
+        mock_search.return_value = ["msg1"]
+        mock_has_att.return_value = True
+        mock_get_pdfs.return_value = [
+            {"filename": "inv.pdf", "data": b"x", "mime_type": "application/pdf"}
+        ]
+        mock_parse.return_value = {
+            "parsed": {"vendor_name": "Test", "total_amount": 10.0},
+            "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
+        }
+        mock_get_label.return_value = "Label_123"
+        mock_persist.return_value = MagicMock()
+
+        result = process_invoice_messages(self.user)
+
+        self.assertEqual(result["summary"]["ingest_items_created"], 1)
+        mock_archive.assert_called_once_with(self.user, "msg1")
+
+    @patch("src.invoice_parser.pdf_parser.services.mark_read_and_archive")
+    @patch("src.invoice_parser.pdf_parser.services.add_label_to_message")
+    @patch("src.invoice_parser.pdf_parser.services.get_or_create_label")
+    @patch("src.invoice_parser.pdf_parser.services.log_api_usage")
+    @patch("src.invoice_parser.pdf_parser.services.persist_invoice_to_db")
+    @patch("src.invoice_parser.pdf_parser.services.parse_pdf_invoice")
+    @patch("src.invoice_parser.pdf_parser.services.get_pdf_attachments")
+    @patch("src.invoice_parser.pdf_parser.services.message_has_attachments")
+    @patch("src.invoice_parser.pdf_parser.services.search_inbox_messages")
+    @patch("src.invoice_parser.pdf_parser.services.verify_gmail_permissions")
+    def test_does_not_archive_when_persistence_skipped(
+        self, mock_verify, mock_search, mock_has_att, mock_get_pdfs, mock_parse,
+        mock_persist, mock_log, mock_get_label, mock_add_label, mock_archive,
+    ):
+        mock_verify.return_value = True
+        mock_search.return_value = ["msg1"]
+        mock_has_att.return_value = True
+        mock_get_pdfs.return_value = [
+            {"filename": "inv.pdf", "data": b"x", "mime_type": "application/pdf"}
+        ]
+        mock_parse.return_value = {
+            "parsed": {"vendor_name": "Test", "total_amount": 10.0},
+            "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
+        }
+        mock_get_label.return_value = "Label_123"
+        mock_persist.return_value = None  # persistence skipped
+
+        result = process_invoice_messages(self.user)
+
+        self.assertEqual(result["summary"]["ingest_items_skipped"], 1)
+        mock_archive.assert_not_called()
+
+    @patch("src.invoice_parser.pdf_parser.services.mark_read_and_archive")
+    @patch("src.invoice_parser.pdf_parser.services.add_label_to_message")
+    @patch("src.invoice_parser.pdf_parser.services.get_or_create_label")
+    @patch("src.invoice_parser.pdf_parser.services.log_api_usage")
+    @patch("src.invoice_parser.pdf_parser.services.persist_invoice_to_db")
+    @patch("src.invoice_parser.pdf_parser.services.parse_pdf_invoice")
+    @patch("src.invoice_parser.pdf_parser.services.get_pdf_attachments")
+    @patch("src.invoice_parser.pdf_parser.services.message_has_attachments")
+    @patch("src.invoice_parser.pdf_parser.services.search_inbox_messages")
+    @patch("src.invoice_parser.pdf_parser.services.verify_gmail_permissions")
+    def test_does_not_archive_when_parse_errors(
+        self, mock_verify, mock_search, mock_has_att, mock_get_pdfs, mock_parse,
+        mock_persist, mock_log, mock_get_label, mock_add_label, mock_archive,
+    ):
+        mock_verify.return_value = True
+        mock_search.return_value = ["msg1"]
+        mock_has_att.return_value = True
+        mock_get_pdfs.return_value = [
+            {"filename": "inv.pdf", "data": b"x", "mime_type": "application/pdf"}
+        ]
+        mock_parse.return_value = {
+            "parsed": {"error": "LLM returned invalid JSON", "raw_response": "..."},
+            "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
+        }
+        mock_get_label.return_value = "Label_123"
+
+        process_invoice_messages(self.user)
+
+        mock_archive.assert_not_called()
