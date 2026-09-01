@@ -4,10 +4,11 @@ Tests for recording page view - showTimer from user preferences.
 
 import json
 import re
-from django.test import TestCase, Client
+from django.test import TestCase, Client, SimpleTestCase
 from django.urls import reverse
 
 from src.accounts.models import CustomUser, UserPreferences
+from src.common.config.settings import RecorderConfig
 
 
 class RecordingPageTimerTests(TestCase):
@@ -80,3 +81,15 @@ class RecordingPageTimerTests(TestCase):
         self.assertEqual(response.status_code, 200)
         config = self._get_recorder_config(response)
         self.assertTrue(config.get('isAppAdmin'))
+
+    def test_recorder_config_max_duration_is_four_minutes(self):
+        """Voice recordings cap each segment at 240 seconds (auto-save and continue)."""
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        config = self._get_recorder_config(response)
+        self.assertEqual(config.get('maxDuration'), 240)
+
+
+class RecorderMaxDurationConfigTests(SimpleTestCase):
+    def test_recorder_config_default_max_duration_is_240(self):
+        self.assertEqual(RecorderConfig.model_fields['max_duration'].default, 240)

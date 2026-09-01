@@ -238,7 +238,7 @@
 
 {% block extra_js %}
 <script
-  src="{% static 'recordings/js/audio_recorder.js' %}?v=20260214-redesign"
+  src="{% static 'recordings/js/audio_recorder.js' %}?v=20260901-autosplit"
   data-swipe-current="voice"
   data-swipe-voice-url="{% url 'recordings:record' %}"
   data-swipe-text-url="{% url 'text_input:page' %}"
@@ -274,6 +274,7 @@
     uploadUrl: config.uploadUrl,
     maxDuration: config.maxDuration,
     maxFileSize: config.maxFileSize,
+    autoContinueOnMaxDuration: true,
   });
 
   // DOM references
@@ -602,6 +603,7 @@
         maxDuration: config.maxDuration,
         maxFileSize: config.maxFileSize,
         transcribeOnly: true,
+        autoContinueOnMaxDuration: false,
       });
       editRecorder.onTranscriptionReady = function(data) {
         var text = data.transcribed_text || '';
@@ -658,6 +660,22 @@
 
   recorder.onGuardDiscard = function(reason) {
     if (window.VDTheme) window.VDTheme.showToast(reason, 'info');
+  };
+
+  recorder.onRollover = function() {
+    if (window.VDTheme) {
+      window.VDTheme.showToast('{% trans "Saved, continuing recording..." %}', 'info');
+    }
+  };
+
+  recorder.onRolloverError = function(error) {
+    if (window.VDTheme) {
+      window.VDTheme.showToast(
+        '{% trans "A segment could not be uploaded and was saved for later." %}',
+        'error'
+      );
+    }
+    console.error('Rollover upload error:', error);
   };
 
   // Record button: start / pause / resume

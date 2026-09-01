@@ -12,13 +12,15 @@ class VoiceDiaryRecorder {
      * 
      * @param {Object} options - Configuration options
      * @param {string} options.uploadUrl - Server endpoint for audio upload (default: '/voice/upload/')
-     * @param {number} options.maxDuration - Maximum recording duration in seconds (default: 600)
+     * @param {number} options.maxDuration - Max seconds per segment (default: 240). 0 = unlimited.
      * @param {number} options.maxFileSize - Maximum file size in bytes (default: 100MB, matches RECORDER_MAX_FILE_SIZE_MB)
+     * @param {boolean} options.autoContinueOnMaxDuration - When true (default unless transcribeOnly),
+     *        hitting maxDuration uploads the current clip and starts a new recording on the same mic stream.
      */
     constructor(options = {}) {
         this.uploadUrl = options.uploadUrl || '/voice/upload/';
         this.wsBaseUrl = options.wsBaseUrl || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
-        this.maxDuration = options.maxDuration ?? 600;
+        this.maxDuration = options.maxDuration ?? 240;
         this.maxFileSize = options.maxFileSize ?? 100 * 1024 * 1024;
         
         // State management
@@ -53,9 +55,17 @@ class VoiceDiaryRecorder {
         this.onContentReady = null;  // Called when transcription is ready (normal mode) - user can edit while classification runs
         this.onGuardDiscard = null;  // Called when speech guard rejects (normal mode)
         this.onTranscriptionDiscarded = null;  // Called when speech guard rejects (transcribe-only)
+        this.onRollover = null;  // Called when a max-duration segment is saved and recording continues
+        this.onRolloverError = null;  // Called if a background segment upload fails (recording continues)
 
         // Transcribe-only mode: transcribe only, no IngestItem created (used by edit recorder)
         this.transcribeOnly = options.transcribeOnly || false;
+        this.autoContinueOnMaxDuration = options.autoContinueOnMaxDuration ?? !this.transcribeOnly;
+
+        // Serialize stop vs auto-rollover so a manual Stop during a segment swap is not lost
+        this._segmentMutex = Promise.resolve();
+        this._stopRequested = false;
+        this._rolloverInFlight = false;
 
         // Quota state (populated by applyQuota or fetchAndApplyQuota)
         this.quotaData = null;
@@ -82,6 +92,67 @@ class VoiceDiaryRecorder {
     }
     
     /**
+     * Run fn exclusively against the current MediaRecorder (stop vs auto-rollover).
+     */
+    _enqueueSegmentOp(fn) {
+        const run = this._segmentMutex.then(fn, fn);
+        this._segmentMutex = run.then(() => undefined, () => undefined);
+        return run;
+    }
+
+    /**
+     * Create a MediaRecorder on the existing mic stream and start it.
+     * Does not request a new getUserMedia permission prompt.
+     */
+    _beginRecorderOnStream() {
+        if (!this.stream) {
+            throw new Error('No media stream');
+        }
+        const recorderOpts = this.mimeType ? { mimeType: this.mimeType } : {};
+        this.mediaRecorder = new MediaRecorder(this.stream, recorderOpts);
+        if (!this.mimeType) {
+            this.mimeType = this.mediaRecorder.mimeType || 'audio/webm';
+        }
+        this.audioChunks = [];
+        this.audioBlob = null;
+        this.pauseDuration = 0;
+        this.pauseStartTime = null;
+        this.startTime = Date.now();
+        this.mediaRecorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) {
+                this.audioChunks.push(e.data);
+            }
+        };
+        this.mediaRecorder.start(1000);
+    }
+
+    /**
+     * Stop the current MediaRecorder and resolve with its audio blob.
+     * Leaves the microphone stream running so a new segment can start immediately.
+     */
+    _stopRecorderKeepStream() {
+        return new Promise((resolve, reject) => {
+            if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
+                const blob = this.audioBlob || new Blob(this.audioChunks, { type: this.mimeType });
+                this.audioChunks = [];
+                resolve(blob);
+                return;
+            }
+            this.mediaRecorder.onstop = () => {
+                const blob = new Blob(this.audioChunks, { type: this.mimeType });
+                this.audioChunks = [];
+                this.audioBlob = blob;
+                resolve(blob);
+            };
+            try {
+                this.mediaRecorder.stop();
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
+
+    /**
      * Start recording audio.
      */
     async startRecording() {
@@ -90,7 +161,10 @@ class VoiceDiaryRecorder {
         }
         
         try {
-            // Request microphone access
+            this._stopRequested = false;
+            this.currentItemId = null;
+            this.currentTempId = null;
+
             this.stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     sampleRate: 44100,
@@ -99,41 +173,9 @@ class VoiceDiaryRecorder {
                     noiseSuppression: true,
                 }
             });
-            
-            // Create MediaRecorder (use browser default if no type verified)
-            const recorderOpts = this.mimeType ? { mimeType: this.mimeType } : {};
-            this.mediaRecorder = new MediaRecorder(this.stream, recorderOpts);
-            if (!this.mimeType) {
-                this.mimeType = this.mediaRecorder.mimeType || 'audio/webm';
-            }
-            
-            // Reset state
-            this.audioChunks = [];
-            this.audioBlob = null;
-            this.pauseDuration = 0;
-            this.pauseStartTime = null;
-            this.startTime = Date.now();
-            this.currentItemId = null;
-            
-            // Handle data
-            this.mediaRecorder.ondataavailable = (e) => {
-                if (e.data && e.data.size > 0) {
-                    this.audioChunks.push(e.data);
-                }
-            };
-            
-            // Handle stop
-            this.mediaRecorder.onstop = () => {
-                this.audioBlob = new Blob(this.audioChunks, { type: this.mimeType });
-                this.audioChunks = [];
-                this.stopStream();
-            };
-            
-            // Start recording
-            this.mediaRecorder.start(1000);
+
+            this._beginRecorderOnStream();
             this.setState('recording');
-            
-            // Start duration tracking
             this.startDurationTracking();
             
         } catch (error) {
@@ -150,8 +192,13 @@ class VoiceDiaryRecorder {
         if (this.state !== 'recording') {
             throw new Error(`Cannot pause in state: ${this.state}`);
         }
+        if (!this.mediaRecorder || this.mediaRecorder.state !== 'recording') {
+            return;
+        }
         
-        this.mediaRecorder.requestData();
+        if (typeof this.mediaRecorder.requestData === 'function') {
+            this.mediaRecorder.requestData();
+        }
         this.mediaRecorder.pause();
         this.pauseStartTime = Date.now();
         this.setState('paused');
@@ -179,63 +226,131 @@ class VoiceDiaryRecorder {
      * @param {File[]} files - Optional array of files to include with the upload (managed by caller/session)
      */
     async stopRecording(files = []) {
-        if (this.state !== 'recording' && this.state !== 'paused') {
-            throw new Error(`Cannot stop in state: ${this.state}`);
-        }
-        
-        // Finalize pause duration
-        if (this.pauseStartTime) {
-            this.pauseDuration += Date.now() - this.pauseStartTime;
-            this.pauseStartTime = null;
-        }
-        
-        // Stop duration tracking
+        this._stopRequested = true;
         this.stopDurationTracking();
-        
-        // Stop recording
-        return new Promise((resolve, reject) => {
-            this.mediaRecorder.onstop = async () => {
-                this.audioBlob = new Blob(this.audioChunks, { type: this.mimeType });
-                this.audioChunks = [];
-                this.stopStream();
-                
-                try {
+
+        return this._enqueueSegmentOp(async () => {
+            if (this.state !== 'recording' && this.state !== 'paused') {
+                if (this.audioBlob && (!this.mediaRecorder || this.mediaRecorder.state === 'inactive')) {
+                    this.stopStream();
                     await this.upload(files);
-                    resolve();
-                } catch (error) {
-                    reject(error);
+                    return;
                 }
-            };
-            
-            this.mediaRecorder.stop();
+                throw new Error(`Cannot stop in state: ${this.state}`);
+            }
+
+            if (this.pauseStartTime) {
+                this.pauseDuration += Date.now() - this.pauseStartTime;
+                this.pauseStartTime = null;
+            }
+
+            const blob = await this._stopRecorderKeepStream();
+            this.audioBlob = blob;
+            this.stopStream();
+            await this.upload(files);
+        }).finally(() => {
+            this.stopDurationTracking();
+        });
+    }
+
+    /**
+     * Auto-save the current clip at maxDuration and immediately start the next segment.
+     * Upload of the finished clip runs in the background so the conversation is not interrupted.
+     */
+    async rolloverRecording() {
+        if (!(this.maxDuration > 0) || !this.autoContinueOnMaxDuration || this.transcribeOnly || this._stopRequested) {
+            return;
+        }
+        if (this.state !== 'recording') {
+            return;
+        }
+        if (this.getDuration() < this.maxDuration) {
+            return;
+        }
+
+        return this._enqueueSegmentOp(async () => {
+            if (!(this.maxDuration > 0) || !this.autoContinueOnMaxDuration || this.transcribeOnly || this._stopRequested) {
+                return;
+            }
+            if (this.state !== 'recording') {
+                return;
+            }
+            if (this.getDuration() < this.maxDuration) {
+                return;
+            }
+
+            const blob = await this._stopRecorderKeepStream();
+
+            if (this._stopRequested) {
+                this.audioBlob = blob;
+                return;
+            }
+
+            try {
+                this._beginRecorderOnStream();
+                this.setState('recording');
+            } catch (error) {
+                this.setState('error');
+                this.stopStream();
+                if (this.onError) {
+                    this.onError(error);
+                }
+                throw error;
+            }
+
+            this.upload([], { background: true, blob }).catch((error) => {
+                console.error('[VoiceDiaryRecorder] Rollover upload failed:', error);
+            });
+
+            if (this._stopRequested) {
+                return;
+            }
+
+            this.startDurationTracking();
+            if (this.onRollover) {
+                this.onRollover();
+            }
         });
     }
     
     /**
      * Upload audio to server.
      * @param {File[]} files - Optional array of files to include with the upload (managed by caller/session)
+     * @param {Object} options
+     * @param {Blob} options.blob - Audio to upload (defaults to this.audioBlob)
+     * @param {boolean} options.background - If true, do not change recorder UI state or attach WebSocket
      */
-    async upload(files = []) {
-        if (!this.audioBlob) {
+    async upload(files = [], options = {}) {
+        const blob = options.blob || this.audioBlob;
+        const background = !!options.background;
+
+        if (!blob) {
             throw new Error('No audio to upload');
         }
         
-        if (this.audioBlob.size > this.maxFileSize) {
-            throw new Error(`File too large. Maximum size is ${this.maxFileSize / 1024 / 1024}MB`);
+        if (blob.size > this.maxFileSize) {
+            const err = new Error(`File too large. Maximum size is ${this.maxFileSize / 1024 / 1024}MB`);
+            if (background) {
+                if (this.onRolloverError) this.onRolloverError(err);
+                throw err;
+            }
+            throw err;
         }
         
-        this.setState('uploading');
+        if (!background) {
+            this.setState('uploading');
+        }
         
-        // Check if online
         if (!navigator.onLine) {
-            await this.saveOffline();
+            await this.saveOffline({ blob, background });
             return;
         }
         
         try {
             const formData = new FormData();
-            const extension = this.mimeType.includes('webm') ? 'webm' : 'wav';
-            formData.append('audio', this.audioBlob, `recording.${extension}`);
+            const mime = blob.type || this.mimeType || '';
+            const extension = mime.includes('webm') || this.mimeType.includes('webm') ? 'webm' : 'wav';
+            formData.append('audio', blob, `recording.${extension}`);
             formData.append('template_type', this.templateType);
             if (this.transcribeOnly) {
                 formData.append('transcribe_only', '1');
@@ -264,6 +379,10 @@ class VoiceDiaryRecorder {
             
             const data = await response.json();
             console.log('[VoiceDiaryRecorder] Upload response:', data);
+
+            if (background) {
+                return data;
+            }
             
             const tempId = data.temp_id;
             const itemId = data.item_id;
@@ -283,8 +402,20 @@ class VoiceDiaryRecorder {
             }
             
             this.setState('processing');
+            return data;
             
         } catch (error) {
+            if (background) {
+                try {
+                    await this.saveOffline({ blob, background: true });
+                } catch (offlineError) {
+                    console.error('[VoiceDiaryRecorder] Could not save failed rollover offline:', offlineError);
+                }
+                if (this.onRolloverError) {
+                    this.onRolloverError(error);
+                }
+                return;
+            }
             this.setState('error');
             if (this.onError) {
                 this.onError(error);
@@ -527,14 +658,19 @@ class VoiceDiaryRecorder {
     
     /**
      * Save recording offline for later sync.
+     * @param {Object} options
+     * @param {Blob} options.blob - Audio to store (defaults to this.audioBlob)
+     * @param {boolean} options.background - If true, do not change recorder UI state
      */
-    async saveOffline() {
+    async saveOffline(options = {}) {
+        const blob = options.blob || this.audioBlob;
+        const background = !!options.background;
         const db = await this.openDB();
         const tx = db.transaction('offline-recordings', 'readwrite');
         const store = tx.objectStore('offline-recordings');
         
         await store.add({
-            blob: this.audioBlob,
+            blob: blob,
             timestamp: Date.now(),
             mimeType: this.mimeType,
             csrfToken: this.getCsrfToken(),
@@ -542,6 +678,10 @@ class VoiceDiaryRecorder {
             templateType: this.templateType,
         });
         
+        if (background) {
+            return;
+        }
+
         this.setState('done');
         
         if (this.onStatusUpdate) {
@@ -608,9 +748,17 @@ class VoiceDiaryRecorder {
                 this.onDurationUpdate(duration);
             }
             
-            // Auto-stop if max duration reached
             if (this.maxDuration > 0 && duration >= this.maxDuration) {
-                this.stopRecording();
+                if (this.autoContinueOnMaxDuration && !this.transcribeOnly && this.state === 'recording') {
+                    if (!this._rolloverInFlight) {
+                        this._rolloverInFlight = true;
+                        this.rolloverRecording().finally(() => {
+                            this._rolloverInFlight = false;
+                        });
+                    }
+                } else if (this.state === 'recording' || this.state === 'paused') {
+                    this.stopRecording();
+                }
             }
         }, 100);
     }
@@ -699,7 +847,8 @@ class VoiceDiaryRecorder {
     /**
      * Apply quota data to this recorder instance.
      *
-     * Token-based quotas: no maxDuration cap. Recorder uses only config max_duration.
+     * Token-based quotas: no maxDuration cap. Recorder uses only config max_duration
+     * (per-segment limit; main recorder auto-continues until the user stops).
      * Stores quotaData for potential UI display (e.g. usage card).
      *
      * @param {Object} quota - Quota JSON from fetchQuota()

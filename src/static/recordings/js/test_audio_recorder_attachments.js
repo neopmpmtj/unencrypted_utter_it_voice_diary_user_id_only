@@ -22,7 +22,7 @@ describe('VoiceDiaryRecorder File Attachments', () => {
         // Reset recorder
         recorder = new VoiceDiaryRecorder({
             uploadUrl: '/test/upload/',
-            maxDuration: 600,
+            maxDuration: 240,
             maxFileSize: 100 * 1024 * 1024,
         });
 
