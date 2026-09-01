@@ -7,10 +7,9 @@
 const CACHE_NAME = 'voicediary-v5';
 const OFFLINE_RECORDINGS_STORE = 'offline-recordings';
 
-// Files to cache for offline access
+// Do not precache audio_recorder.js — it must always load the latest auto-restart logic.
 const STATIC_ASSETS = [
     '/voice/',
-    '/static/recordings/js/audio_recorder.js',
     '/static/css/style.css',
 ];
 
@@ -69,6 +68,12 @@ self.addEventListener('fetch', (event) => {
     
     // Skip API requests (let them fail naturally for offline handling)
     if (event.request.url.includes('/api/') || event.request.url.includes('/voice/upload')) {
+        return;
+    }
+
+    // Always fetch the recorder script so auto-restart updates are not stuck in cache.
+    if (event.request.url.includes('/static/recordings/js/audio_recorder.js')) {
+        event.respondWith(fetch(event.request));
         return;
     }
     

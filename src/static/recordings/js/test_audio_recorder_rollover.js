@@ -78,7 +78,9 @@ function installBrowserMocks() {
         onLine: true,
         mediaDevices: {
             getUserMedia: async () => ({
+                active: true,
                 getTracks: () => [{
+                    readyState: 'live',
                     stop: () => { trackStopCount += 1; },
                 }],
             }),
@@ -366,5 +368,26 @@ describe('VoiceDiaryRecorder auto-continue at max duration', () => {
         assert.equal(fetchCalls.length, 1);
         assert.match(seenError.message, /MediaRecorder restart failed/);
         assert.equal(recorder.state, 'error');
+    });
+
+    it('requests a new mic stream when the current stream cannot be reused', async () => {
+        await startAndReachMaxDuration(recorder);
+        let beginCalls = 0;
+        const origBegin = recorder._beginRecorderOnStream.bind(recorder);
+        recorder._beginRecorderOnStream = function() {
+            beginCalls += 1;
+            if (beginCalls === 1) {
+                throw new Error('reuse failed');
+            }
+            return origBegin();
+        };
+
+        await recorder.rolloverRecording();
+
+        assert.equal(beginCalls, 2);
+        assert.equal(recorder.state, 'recording');
+        assert.ok(trackStopCount >= 1);
+        await waitFor(20);
+        assert.equal(fetchCalls.length, 1);
     });
 });
