@@ -344,6 +344,7 @@
         // Format date
         const date = entry.occurred_at ? new Date(entry.occurred_at) : null;
         const dateStr = date ? formatDate(date) : 'Unknown date';
+        const dateLine = formatDateWithDuration(dateStr, entry.recording_duration_seconds);
 
         // Get type badge class
         const typeBadgeClass = getTypeBadgeClass(entry.item_type);
@@ -386,7 +387,7 @@
                     '</div>' +
                 '</div>' +
                 '<p class="text-xs text-muted-foreground mt-1 line-clamp-2">' + escapeHtml(entry.content_preview) + '</p>' +
-                '<span class="text-[13px] text-muted-foreground/70 mt-1 inline-block">' + dateStr + '</span>' + attachmentCountHtml +
+                '<span class="text-[13px] text-muted-foreground/70 mt-1 inline-block">' + dateLine + '</span>' + attachmentCountHtml +
             '</div>' +
             '<div class="entry-content hidden border-t border-border p-4 bg-secondary/20">' +
                 '<div class="vd-transcription-text text-foreground whitespace-pre-wrap leading-relaxed">' + escapeHtml(entry.content_full) + '</div>' +
@@ -561,6 +562,17 @@
         const datePart = date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
         const timePart = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         return datePart + ' ' + timePart;
+    }
+
+    /**
+     * Append original recording duration (whole seconds) next to the date.
+     */
+    function formatDateWithDuration(dateStr, durationSeconds) {
+        const seconds = parseInt(durationSeconds, 10);
+        if (!seconds || seconds < 1) {
+            return dateStr;
+        }
+        return dateStr + ' · ' + seconds + 's';
     }
 
     /**

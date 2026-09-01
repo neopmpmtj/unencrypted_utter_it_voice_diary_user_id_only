@@ -6,6 +6,7 @@ import json
 import re
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -555,6 +556,67 @@ class EntriesListApiTests(TestCase):
         self.assertEqual(len(data["entries"]), 1)
         mock_fin_disp.assert_not_called()
         mock_list_disp.assert_not_called()
+
+    def test_entries_list_api_includes_recording_duration_and_group_id(self):
+        group_id = uuid.uuid4()
+        IngestItem.objects.create(
+            user=self.user,
+            item_type="audio",
+            status="processed",
+            is_deleted=False,
+            occurred_at=timezone.now(),
+            title="Voice Recording 2026-09-01 11:31",
+            content_text="That is basically what I need to do.",
+            recording_duration_seconds=240,
+            recording_group_id=group_id,
+        )
+
+        url = reverse("entries:api_list")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        entry = json.loads(response.content)["entries"][0]
+        self.assertEqual(entry["recording_duration_seconds"], 240)
+        self.assertEqual(entry["recording_group_id"], str(group_id))
+
+    def test_entries_list_api_falls_back_to_audio_duration_seconds(self):
+        IngestItem.objects.create(
+            user=self.user,
+            item_type="audio",
+            status="processed",
+            is_deleted=False,
+            occurred_at=timezone.now(),
+            title="Older clip",
+            content_text="Legacy duration field only",
+            audio_duration_seconds=59.6,
+        )
+
+        url = reverse("entries:api_list")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        entry = json.loads(response.content)["entries"][0]
+        self.assertEqual(entry["recording_duration_seconds"], 60)
+        self.assertIsNone(entry["recording_group_id"])
+
+    def test_entries_list_api_text_entry_has_null_recording_fields(self):
+        IngestItem.objects.create(
+            user=self.user,
+            item_type="text",
+            status="processed",
+            is_deleted=False,
+            occurred_at=timezone.now(),
+            title="Typed note",
+            content_text="No audio",
+        )
+
+        url = reverse("entries:api_list")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        entry = json.loads(response.content)["entries"][0]
+        self.assertIsNone(entry["recording_duration_seconds"])
+        self.assertIsNone(entry["recording_group_id"])
 
 
 class ServeAttachmentTests(TestCase):

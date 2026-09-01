@@ -62,6 +62,33 @@ from src.ingestion.audio_services import AudioChunker
 logger = logging.getLogger(__name__)
 
 
+def _parse_recording_duration_seconds(request, fallback_duration):
+    """Whole seconds of the original clip, before silence removal."""
+    raw = request.POST.get("recording_duration_seconds")
+    parsed = None
+    if raw not in (None, ""):
+        try:
+            parsed = int(round(float(raw)))
+        except (TypeError, ValueError):
+            parsed = None
+    if parsed is not None and parsed > 0:
+        return parsed
+    if fallback_duration and fallback_duration > 0:
+        return int(round(float(fallback_duration)))
+    return None
+
+
+def _parse_recording_group_id(request):
+    """Optional client-generated UUID that groups consecutive session clips."""
+    raw = (request.POST.get("recording_group_id") or "").strip()
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(raw)
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 @login_required
 def recording_page(request):
     """
@@ -388,6 +415,8 @@ def upload_audio(request):
             original_file_size=audio_file.size,
             audio_format=extension,
             audio_duration_seconds=duration,
+            recording_duration_seconds=_parse_recording_duration_seconds(request, duration),
+            recording_group_id=_parse_recording_group_id(request),
         )
         
         # Create ItemFile for audio

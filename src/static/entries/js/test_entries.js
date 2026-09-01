@@ -174,3 +174,31 @@ describe('Entries attachment rendering', () => {
         });
     });
 });
+
+describe('Entries date line with recording duration', () => {
+    function formatDateWithDuration(dateStr, durationSeconds) {
+        const seconds = parseInt(durationSeconds, 10);
+        if (!seconds || seconds < 1) {
+            return dateStr;
+        }
+        return dateStr + ' · ' + seconds + 's';
+    }
+
+    test('appends whole seconds next to the date', () => {
+        expect(formatDateWithDuration('Sep 1, 2026 12:31 PM', 240)).toBe(
+            'Sep 1, 2026 12:31 PM · 240s'
+        );
+    });
+
+    test('omits duration when missing', () => {
+        expect(formatDateWithDuration('Sep 1, 2026 12:31 PM', null)).toBe(
+            'Sep 1, 2026 12:31 PM'
+        );
+    });
+
+    test('omits duration for text entries with zero/empty duration', () => {
+        expect(formatDateWithDuration('Sep 1, 2026 12:31 PM', 0)).toBe(
+            'Sep 1, 2026 12:31 PM'
+        );
+    });
+});

@@ -112,6 +112,16 @@ class IngestItem(models.Model):
         null=True, blank=True,
         help_text="Original audio duration in seconds"
     )
+    recording_duration_seconds = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Original recording duration in whole seconds, before silence removal",
+    )
+    recording_group_id = models.UUIDField(
+        null=True,
+        blank=True,
+        help_text="Client-generated id shared by consecutive clips from one recording session",
+    )
     audio_format = models.CharField(
         max_length=20, blank=True, default="",
         help_text="Original audio format (webm, wav, mp3)"
@@ -137,6 +147,7 @@ class IngestItem(models.Model):
             models.Index(fields=["user", "status"]),
             models.Index(fields=["user", "item_type"]),
             models.Index(fields=["audio_deletion_scheduled_at"]),
+            models.Index(fields=["user", "recording_group_id"], name="ingestion_i_user_id_rgrp_idx"),
         ]
         constraints = [
             models.UniqueConstraint(

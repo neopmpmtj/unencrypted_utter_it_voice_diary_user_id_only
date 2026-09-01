@@ -4,7 +4,7 @@
  * Provides offline support and background sync for recordings.
  */
 
-const CACHE_NAME = 'voicediary-v4';
+const CACHE_NAME = 'voicediary-v5';
 const OFFLINE_RECORDINGS_STORE = 'offline-recordings';
 
 // Files to cache for offline access
@@ -120,6 +120,12 @@ async function syncOfflineRecordings() {
                 formData.append('template_type', recording.templateType || 'plain');
                 if (recording.transcribeOnly) {
                     formData.append('transcribe_only', '1');
+                }
+                if (recording.recordingDurationSeconds) {
+                    formData.append('recording_duration_seconds', String(recording.recordingDurationSeconds));
+                }
+                if (recording.recordingGroupId) {
+                    formData.append('recording_group_id', recording.recordingGroupId);
                 }
                 const headers = { 'Accept': 'application/json' };
                 if (recording.csrfToken) {
