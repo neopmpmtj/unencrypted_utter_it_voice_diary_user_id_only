@@ -15,10 +15,10 @@ from src.common.model_picker.config_model_picker import (
 GOAL = INVOICE_PARSER_PDF
 
 TRIGGER_WORDS_EN = ["invoice", "invoices"]
-TRIGGER_WORDS_PT = ["fatura", "faturas", "recibo", "recibos"]
+TRIGGER_WORDS_PT = ["fatura", "faturas", "factura", "facturas", "recibo", "recibos"]
 TRIGGER_WORDS = TRIGGER_WORDS_EN + TRIGGER_WORDS_PT
 
-PROCESSED_LABEL_NAME = "UtterIt/InvoiceParsed"
+PROCESSED_LABEL_NAME = "Facturas/Processadas"
 
 _LANGUAGE_INSTRUCTION = (
     "IMPORTANT: Respond in the same language as the input text below. "
@@ -35,8 +35,9 @@ INVOICE_JSON_SCHEMA = {
     "line_items": [
         {
             "description": "str",
-            "quantity": "float",
-            "unit_price": "float",
+            "quantity": "float or null (null when not printed)",
+            "unit_price": "float or null (null when not printed)",
+            "discount": "float (0 if none)",
             "total": "float"
         }
     ],
@@ -79,6 +80,8 @@ Rules:
     - total_amount = payable total after discount
 17. If the document is not an invoice/receipt or contains no extractable invoice data, return: {"error": "No invoice data found"}
 18. If uncertain, return null for the uncertain field instead of guessing.
+19. Preserve EVERY printed line item as its own entry in line_items. Never merge, combine, or summarize multiple lines into a single entry — even if several lines share the same description. One printed article = one line_items entry.
+20. If a line has no quantity or unit price printed (e.g. fixed-price items sold per unit/pack), set quantity and unit_price to null and keep the printed line total in "total".
 
 EXPECTED_OUTPUT_EXAMPLE = {
     "vendor_name": "Pingo Doce",
@@ -89,10 +92,25 @@ EXPECTED_OUTPUT_EXAMPLE = {
 
     "line_items": [
         {
-            "description": "Produto Exemplo",
+            "description": "PÃO BIJOU",
+            "quantity": 5.0,
+            "unit_price": 0.17,
+            "discount": 0,
+            "total": 0.85
+        },
+        {
+            "description": "QJ AGROS 1/4 350G",
             "quantity": 1.0,
-            "unit_price": 2.99,
-            "total": 2.99
+            "unit_price": 3.99,
+            "discount": 0.5,
+            "total": 3.49
+        },
+        {
+            "description": "LARANJA C.6/7 POR B2",
+            "quantity": null,
+            "unit_price": null,
+            "discount": 0,
+            "total": 2.49
         }
     ],
 
