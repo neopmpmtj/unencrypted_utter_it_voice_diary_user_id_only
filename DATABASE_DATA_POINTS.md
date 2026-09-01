@@ -143,6 +143,8 @@ This document lists application-owned database tables and their fields, organize
 | is_deleted | bool | Soft delete flag |
 | deleted_at | datetime | Deletion time |
 | audio_duration_seconds | float | Original audio duration |
+| recording_duration_seconds | int | Original recording duration in whole seconds (before silence removal) |
+| recording_group_id | UUID | Shared id for consecutive clips from one recording session |
 | audio_format | str | e.g. `webm`, `wav`, `mp3` |
 | original_file_size | bigint | Original file size (bytes) |
 | detected_language | str | ISO language code |

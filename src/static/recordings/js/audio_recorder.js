@@ -67,8 +67,35 @@ class VoiceDiaryRecorder {
         this._stopRequested = false;
         this._rolloverInFlight = false;
 
+        // Shared by consecutive clips until the user starts a new Record session
+        this.recordingGroupId = null;
+
         // Quota state (populated by applyQuota or fetchAndApplyQuota)
         this.quotaData = null;
+    }
+
+    _newRecordingGroupId() {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+
+    _captureSegmentDurationSeconds() {
+        return Math.max(0, Math.round(this.getDuration()));
+    }
+
+    _appendRecordingMeta(formData, durationSeconds) {
+        if (durationSeconds != null && durationSeconds > 0) {
+            formData.append('recording_duration_seconds', String(durationSeconds));
+        }
+        if (this.recordingGroupId) {
+            formData.append('recording_group_id', this.recordingGroupId);
+        }
     }
     
     /**
@@ -210,6 +237,7 @@ class VoiceDiaryRecorder {
             this._stopRequested = false;
             this.currentItemId = null;
             this.currentTempId = null;
+            this.recordingGroupId = this.transcribeOnly ? null : this._newRecordingGroupId();
 
             this.stream = await navigator.mediaDevices.getUserMedia(this._micConstraints());
 
@@ -267,12 +295,13 @@ class VoiceDiaryRecorder {
     async stopRecording(files = []) {
         this._stopRequested = true;
         this.stopDurationTracking();
+        const durationSeconds = this._captureSegmentDurationSeconds();
 
         return this._enqueueSegmentOp(async () => {
             if (this.state !== 'recording' && this.state !== 'paused') {
                 if (this.audioBlob && (!this.mediaRecorder || this.mediaRecorder.state === 'inactive')) {
                     this.stopStream();
-                    await this.upload(files);
+                    await this.upload(files, { durationSeconds });
                     return;
                 }
                 throw new Error(`Cannot stop in state: ${this.state}`);
@@ -286,7 +315,7 @@ class VoiceDiaryRecorder {
             const blob = await this._stopRecorderKeepStream();
             this.audioBlob = blob;
             this.stopStream();
-            await this.upload(files);
+            await this.upload(files, { durationSeconds });
         }).finally(() => {
             this.stopDurationTracking();
         });
@@ -318,6 +347,7 @@ class VoiceDiaryRecorder {
                 return;
             }
 
+            const durationSeconds = this._captureSegmentDurationSeconds();
             const blob = await this._stopRecorderKeepStream();
 
             if (this._stopRequested) {
@@ -327,7 +357,7 @@ class VoiceDiaryRecorder {
 
             // Persist the finished clip before swapping recorders so a restart
             // failure cannot drop audio that is already in memory.
-            const persist = this.upload([], { background: true, blob });
+            const persist = this.upload([], { background: true, blob, durationSeconds });
             persist.catch((error) => {
                 console.error('[VoiceDiaryRecorder] Rollover upload failed:', error);
             });
@@ -360,6 +390,18 @@ class VoiceDiaryRecorder {
                     await this.startRecording();
                 } catch (startError) {
                     this.setState('error');
+                    try {
+                        await persist;
+                    } catch (uploadError) {
+                        try {
+                            await this.saveOffline({ blob, background: true, durationSeconds });
+                        } catch (offlineError) {
+                            console.error('[VoiceDiaryRecorder] Could not save segment after restart failure:', offlineError);
+                        }
+                        if (this.onRolloverError) {
+                            this.onRolloverError(uploadError);
+                        }
+                    }
                     if (this.onError) {
                         this.onError(startError);
                     }
@@ -387,6 +429,9 @@ class VoiceDiaryRecorder {
     async upload(files = [], options = {}) {
         const blob = options.blob || this.audioBlob;
         const background = !!options.background;
+        const durationSeconds = options.durationSeconds != null
+            ? options.durationSeconds
+            : this._captureSegmentDurationSeconds();
 
         if (!blob) {
             throw new Error('No audio to upload');
@@ -406,7 +451,7 @@ class VoiceDiaryRecorder {
         }
         
         if (!navigator.onLine) {
-            await this.saveOffline({ blob, background });
+            await this.saveOffline({ blob, background, durationSeconds });
             return;
         }
         
@@ -419,6 +464,7 @@ class VoiceDiaryRecorder {
             if (this.transcribeOnly) {
                 formData.append('transcribe_only', '1');
             }
+            this._appendRecordingMeta(formData, durationSeconds);
 
             files.forEach((file) => {
                 formData.append('files', file);
@@ -471,7 +517,7 @@ class VoiceDiaryRecorder {
         } catch (error) {
             if (background) {
                 try {
-                    await this.saveOffline({ blob, background: true });
+                    await this.saveOffline({ blob, background: true, durationSeconds });
                 } catch (offlineError) {
                     console.error('[VoiceDiaryRecorder] Could not save failed rollover offline:', offlineError);
                 }
@@ -748,6 +794,9 @@ class VoiceDiaryRecorder {
     async saveOffline(options = {}) {
         const blob = options.blob || this.audioBlob;
         const background = !!options.background;
+        const durationSeconds = options.durationSeconds != null
+            ? options.durationSeconds
+            : this._captureSegmentDurationSeconds();
         const db = await this.openDB();
         const tx = db.transaction('offline-recordings', 'readwrite');
         const store = tx.objectStore('offline-recordings');
@@ -759,6 +808,8 @@ class VoiceDiaryRecorder {
             csrfToken: this.getCsrfToken(),
             transcribeOnly: this.transcribeOnly,
             templateType: this.templateType,
+            recordingGroupId: this.recordingGroupId || null,
+            recordingDurationSeconds: durationSeconds || null,
         });
 
         await this._registerBackgroundSync();

@@ -199,6 +199,9 @@ describe('VoiceDiaryRecorder auto-continue at max duration', () => {
         const body = fetchCalls[0].opts.body;
         assert.ok(body instanceof FormData);
         assert.equal(body.get('transcribe_only'), null);
+        assert.ok(body.get('recording_group_id'));
+        assert.equal(body.get('recording_group_id'), recorder.recordingGroupId);
+        assert.ok(Number(body.get('recording_duration_seconds')) >= recorder.maxDuration);
         assert.equal(MockWebSocket.instances.length, 0, 'background upload must not open pipeline WebSocket');
         assert.equal(recorder.currentItemId, null);
     });
@@ -220,6 +223,39 @@ describe('VoiceDiaryRecorder auto-continue at max duration', () => {
         await startAndReachMaxDuration(recorder);
         await recorder.rolloverRecording();
         assert.equal(rolloverCount, 1);
+    });
+
+    it('reuses the same recording_group_id across consecutive rollover uploads', async () => {
+        await startAndReachMaxDuration(recorder);
+        const groupId = recorder.recordingGroupId;
+        assert.ok(groupId);
+
+        await recorder.rolloverRecording();
+        await waitFor(20);
+        recorder.stopDurationTracking();
+        recorder.startTime = Date.now() - (recorder.maxDuration * 1000);
+        await recorder.rolloverRecording();
+        await waitFor(20);
+
+        assert.equal(fetchCalls.length, 2);
+        assert.equal(recorder.recordingGroupId, groupId);
+        assert.equal(fetchCalls[0].opts.body.get('recording_group_id'), groupId);
+        assert.equal(fetchCalls[1].opts.body.get('recording_group_id'), groupId);
+    });
+
+    it('does not send a recording_group_id in transcribe-only mode', async () => {
+        const edit = new VoiceDiaryRecorder({
+            uploadUrl: '/voice/upload/',
+            transcribeOnly: true,
+            maxDuration: 240,
+        });
+        edit.connectWebSocket = () => {};
+        await edit.startRecording();
+        assert.equal(edit.recordingGroupId, null);
+        await edit.stopRecording();
+        assert.equal(fetchCalls[0].opts.body.get('recording_group_id'), null);
+        edit.stopDurationTracking();
+        edit.stopStream();
     });
 
     it('does not include session files on auto-rollover uploads', async () => {

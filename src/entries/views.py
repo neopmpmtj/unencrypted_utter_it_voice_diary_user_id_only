@@ -134,11 +134,22 @@ def _attachment_entries_for_api(request, item):
     return out
 
 
+def _recording_fields_for_api(item):
+    """Original recording duration (seconds) and optional session group id."""
+    duration = item.recording_duration_seconds
+    if duration is None and item.audio_duration_seconds:
+        duration = int(round(item.audio_duration_seconds))
+    return {
+        "recording_duration_seconds": duration,
+        "recording_group_id": str(item.recording_group_id) if item.recording_group_id else None,
+    }
+
+
 def _build_entry_response(request, item, content_text, title):
     """Build the entry dict used in API responses."""
     display_text = content_text
     attachments = _attachment_entries_for_api(request, item)
-    return {
+    payload = {
         'id': str(item.id),
         'title': title or (f"Entry {item.occurred_at.strftime('%Y-%m-%d %H:%M') if item.occurred_at else 'Unknown'}"),
         'content_preview': truncate_preview(display_text),
@@ -148,6 +159,8 @@ def _build_entry_response(request, item, content_text, title):
         'tags': _get_item_classification_labels(item),
         'attachments': attachments,
     }
+    payload.update(_recording_fields_for_api(item))
+    return payload
 
 
 @login_required
@@ -338,18 +351,8 @@ def entries_list_api(request):
                 if not item:
                     continue
                 content_text = item.content_text or ""
-                summary_text = item.summary_text or ""
                 title = item.title or ""
-                entries.append({
-                    'id': str(item.id),
-                    'title': title or (f"Entry {item.occurred_at.strftime('%Y-%m-%d %H:%M') if item.occurred_at else 'Unknown'}"),
-                    'content_preview': truncate_preview(content_text),
-                    'content_full': content_text,
-                    'occurred_at': item.occurred_at.isoformat() if item.occurred_at else None,
-                    'item_type': item.item_type,
-                    'tags': _get_item_classification_labels(item),
-                    'attachments': _attachment_entries_for_api(request, item),
-                })
+                entries.append(_build_entry_response(request, item, content_text, title))
             return JsonResponse({
                 'entries': entries,
                 'has_more': False,
@@ -395,23 +398,12 @@ def entries_list_api(request):
                 
                 # Decrypt content
                 content_text = item.content_text or ""
-                summary_text = item.summary_text or ""
                 title = item.title or ""
                 
                 # Check if search query matches
                 if (search_lower in (content_text or '').lower() or 
                     search_lower in (title or '').lower()):
-                    display_text = content_text
-                    entries.append({
-                        'id': str(item.id),
-                        'title': title or f"Entry {item.occurred_at.strftime('%Y-%m-%d %H:%M') if item.occurred_at else 'Unknown'}",
-                        'content_preview': truncate_preview(display_text),
-                        'content_full': display_text,
-                        'occurred_at': item.occurred_at.isoformat() if item.occurred_at else None,
-                        'item_type': item.item_type,
-                        'tags': _get_item_classification_labels(item),
-                        'attachments': _attachment_entries_for_api(request, item),
-                    })
+                    entries.append(_build_entry_response(request, item, content_text, title))
                     
                     if len(entries) >= page_size:
                         # Check if there might be more
@@ -435,17 +427,7 @@ def entries_list_api(request):
         for item in items:
             content_text = item.content_text or ""
             title = item.title or ""
-            display_text = content_text
-            entries.append({
-                'id': str(item.id),
-                'title': title or f"Entry {item.occurred_at.strftime('%Y-%m-%d %H:%M') if item.occurred_at else 'Unknown'}",
-                'content_preview': truncate_preview(display_text),
-                'content_full': display_text,
-                'occurred_at': item.occurred_at.isoformat() if item.occurred_at else None,
-                'item_type': item.item_type,
-                'tags': _get_item_classification_labels(item),
-                'attachments': _attachment_entries_for_api(request, item),
-            })
+            entries.append(_build_entry_response(request, item, content_text, title))
         
         if items:
             next_cursor = items[-1].occurred_at.isoformat() if items[-1].occurred_at else None

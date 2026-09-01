@@ -126,6 +126,12 @@ async function syncOfflineRecordings() {
                 if (recording.transcribeOnly) {
                     formData.append('transcribe_only', '1');
                 }
+                if (recording.recordingDurationSeconds) {
+                    formData.append('recording_duration_seconds', String(recording.recordingDurationSeconds));
+                }
+                if (recording.recordingGroupId) {
+                    formData.append('recording_group_id', recording.recordingGroupId);
+                }
                 const headers = { 'Accept': 'application/json' };
                 if (recording.csrfToken) {
                     headers['X-CSRFToken'] = recording.csrfToken;
