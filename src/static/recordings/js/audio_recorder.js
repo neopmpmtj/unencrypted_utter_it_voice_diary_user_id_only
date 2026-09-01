@@ -100,6 +100,17 @@ class VoiceDiaryRecorder {
         return run;
     }
 
+    _micConstraints() {
+        return {
+            audio: {
+                sampleRate: 44100,
+                channelCount: 1,
+                echoCancellation: true,
+                noiseSuppression: true,
+            },
+        };
+    }
+
     /**
      * Create a MediaRecorder on the existing mic stream and start it.
      * Does not request a new getUserMedia permission prompt.
@@ -124,6 +135,41 @@ class VoiceDiaryRecorder {
             }
         };
         this.mediaRecorder.start(1000);
+    }
+
+    /**
+     * After a max-duration stop, start the next clip.
+     * Reuses the live stream when possible; otherwise requests the mic again
+     * (required on many mobile browsers after MediaRecorder.stop()).
+     */
+    async _restartCaptureForRollover() {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        if (this._stopRequested) {
+            return;
+        }
+
+        const streamUsable = !!(
+            this.stream
+            && this.stream.active !== false
+            && typeof this.stream.getTracks === 'function'
+            && this.stream.getTracks().some((track) => track.readyState === 'live')
+        );
+
+        if (streamUsable) {
+            try {
+                this._beginRecorderOnStream();
+                return;
+            } catch (error) {
+                console.warn('[VoiceDiaryRecorder] Could not reuse mic stream, requesting a new one:', error);
+            }
+        }
+
+        this.stopStream();
+        if (this._stopRequested) {
+            return;
+        }
+        this.stream = await navigator.mediaDevices.getUserMedia(this._micConstraints());
+        this._beginRecorderOnStream();
     }
 
     /**
@@ -156,23 +202,16 @@ class VoiceDiaryRecorder {
      * Start recording audio.
      */
     async startRecording() {
-        if (this.state !== 'idle' && this.state !== 'done' && this.state !== 'error') {
+        if (this.state === 'recording' || this.state === 'paused' || this.state === 'uploading') {
             throw new Error(`Cannot start recording in state: ${this.state}`);
         }
-        
+
         try {
             this._stopRequested = false;
             this.currentItemId = null;
             this.currentTempId = null;
 
-            this.stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    sampleRate: 44100,
-                    channelCount: 1,
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                }
-            });
+            this.stream = await navigator.mediaDevices.getUserMedia(this._micConstraints());
 
             this._beginRecorderOnStream();
             this.setState('recording');
@@ -293,36 +332,45 @@ class VoiceDiaryRecorder {
                 console.error('[VoiceDiaryRecorder] Rollover upload failed:', error);
             });
 
+            this.stopDurationTracking();
+
             try {
-                this._beginRecorderOnStream();
+                await this._restartCaptureForRollover();
+                if (this._stopRequested) {
+                    this.stopDurationTracking();
+                    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+                        try {
+                            await this._stopRecorderKeepStream();
+                        } catch (_) { /* ignore */ }
+                    }
+                    this.stopStream();
+                    return;
+                }
                 this.setState('recording');
+                this.startDurationTracking();
             } catch (error) {
                 this.audioBlob = blob;
-                this.setState('error');
                 this.stopStream();
+                if (this._stopRequested) {
+                    return;
+                }
+                console.warn('[VoiceDiaryRecorder] Rollover restart failed, starting a new session:', error);
                 try {
-                    await persist;
-                } catch (uploadError) {
-                    try {
-                        await this.saveOffline({ blob, background: true });
-                    } catch (offlineError) {
-                        console.error('[VoiceDiaryRecorder] Could not save segment after restart failure:', offlineError);
+                    this.setState('idle');
+                    await this.startRecording();
+                } catch (startError) {
+                    this.setState('error');
+                    if (this.onError) {
+                        this.onError(startError);
                     }
-                    if (this.onRolloverError) {
-                        this.onRolloverError(uploadError);
-                    }
+                    throw startError;
                 }
-                if (this.onError) {
-                    this.onError(error);
-                }
-                throw error;
             }
 
             if (this._stopRequested) {
                 return;
             }
 
-            this.startDurationTracking();
             if (this.onRollover) {
                 this.onRollover();
             }
@@ -470,6 +518,25 @@ class VoiceDiaryRecorder {
         this.ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
             console.log('[VoiceDiaryRecorder] Status update:', data);
+
+            // A prior clip's pipeline must not stop or replace an in-progress recording.
+            if (this.state === 'recording' || this.state === 'paused') {
+                const terminal = (
+                    data.type === 'complete'
+                    || data.type === 'error'
+                    || data.type === 'content.ready'
+                    || data.type === 'transcription.ready'
+                    || data.type === 'transcription.discarded'
+                    || data.checkpoint === 'guard_discard'
+                    || data.status === 'calendar_conflict'
+                    || data.conflict
+                );
+                if (terminal) {
+                    this.clearPolling();
+                    try { this.ws.close(); } catch (_) { /* ignore */ }
+                }
+                return;
+            }
             
             if (this.onStatusUpdate) {
                 this.onStatusUpdate(data);

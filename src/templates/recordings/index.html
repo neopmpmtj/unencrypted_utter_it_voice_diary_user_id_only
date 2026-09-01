@@ -238,7 +238,7 @@
 
 {% block extra_js %}
 <script
-  src="{% static 'recordings/js/audio_recorder.js' %}?v=20260901-autosplit-2"
+  src="{% static 'recordings/js/audio_recorder.js' %}?v=20260901-autorestart"
   data-swipe-current="voice"
   data-swipe-voice-url="{% url 'recordings:record' %}"
   data-swipe-text-url="{% url 'text_input:page' %}"
@@ -325,6 +325,56 @@
   var lastSessionItemId    = null;
   var lastSessionContent   = '';
   var editFeatureAllowed   = true; // updated by quota fetch
+  var autoContinueSession  = false;
+  var loopRestartInFlight  = false;
+
+  function prepareNextSegmentUi() {
+    if (showTimer) resetTimerDisplay();
+    if (errorContainer) errorContainer.classList.add('hidden');
+    if (spinnerOverlay) spinnerOverlay.classList.add('hidden');
+    if (recordingSpinner) {
+      recordingSpinner.classList.remove('vd-spinner--red', 'vd-spinner--green');
+    }
+    if (transcriptionCard && transcriptionPlaceholder) {
+      transcriptionCard.classList.add('hidden');
+      transcriptionPlaceholder.classList.remove('hidden');
+    }
+    recordBtn.disabled = false;
+    recordBtn.classList.add('recording');
+    recordBtn.classList.remove('paused');
+    stopBtn.classList.remove('hidden');
+    stopBtn.disabled = false;
+    showIcon('pause');
+    session.active = true;
+    session.phase = 'recording';
+  }
+
+  function ensureLoopRecording() {
+    if (!autoContinueSession) return;
+    if (loopRestartInFlight) return;
+    var s = recorder.state;
+    if (s === 'recording' || s === 'paused') {
+      prepareNextSegmentUi();
+      return;
+    }
+    if (s === 'uploading') return;
+
+    loopRestartInFlight = true;
+    prepareNextSegmentUi();
+    recorder.startRecording().then(function() {
+      loopRestartInFlight = false;
+      if (errorContainer) errorContainer.classList.add('hidden');
+      syncInlineRewriteControls();
+    }).catch(function(err) {
+      loopRestartInFlight = false;
+      if (window.VDTheme) {
+        window.VDTheme.showToast(
+          '{% trans "Could not continue recording" %}: ' + err.message,
+          'error'
+        );
+      }
+    });
+  }
 
   // ===== Entry Session =====
   // Owns the file attachment list and persists across the full entry lifecycle
@@ -470,6 +520,10 @@
         break;
 
       case 'processing':
+        if (autoContinueSession) {
+          ensureLoopRecording();
+          break;
+        }
         recordBtn.disabled = true;
         stopBtn.classList.add('hidden');
         stopBtn.disabled = true;
@@ -487,6 +541,10 @@
         break;
 
       case 'content_ready':
+        if (autoContinueSession) {
+          ensureLoopRecording();
+          break;
+        }
         recordBtn.disabled = true;
         stopBtn.classList.add('hidden');
         stopBtn.disabled = true;
@@ -495,6 +553,10 @@
         break;
 
       case 'done':
+        if (autoContinueSession) {
+          ensureLoopRecording();
+          break;
+        }
         recordBtn.disabled = false;
         stopBtn.classList.add('hidden');
         showIcon('record');
@@ -505,6 +567,10 @@
         break;
 
       case 'error':
+        if (autoContinueSession) {
+          ensureLoopRecording();
+          break;
+        }
         recordBtn.disabled = false;
         stopBtn.classList.add('hidden');
         showIcon('record');
@@ -542,10 +608,18 @@
   }
 
   recorder.onContentReady = function(data) {
+    if (autoContinueSession) {
+      ensureLoopRecording();
+      return;
+    }
     showTranscriptionContent(data.content_text);
   };
 
   recorder.onComplete = function(data) {
+    if (autoContinueSession) {
+      ensureLoopRecording();
+      return;
+    }
     showTranscriptionContent(data.content_text);
   };
 
@@ -663,6 +737,7 @@
   };
 
   recorder.onRollover = function() {
+    prepareNextSegmentUi();
     if (window.VDTheme) {
       window.VDTheme.showToast('{% trans "Saved, continuing recording..." %}', 'info');
     }
@@ -685,6 +760,7 @@
     } else if (recorder.state === 'paused') {
       recorder.resumeRecording();
     } else {
+      autoContinueSession = true;
       if (!session.active) {
         session.start('recording');
       }
@@ -706,6 +782,8 @@
 
   // Stop button: pass session files to recorder
   stopBtn.addEventListener('click', function() {
+    autoContinueSession = false;
+    loopRestartInFlight = false;
     recorder.stopRecording(session.files).catch(function(err) {
       console.error('Stop recording error:', err);
     });
