@@ -107,6 +107,34 @@ function installBrowserMocks() {
 installBrowserMocks();
 const VoiceDiaryRecorder = require('./audio_recorder.js');
 
+function mockIndexedDB() {
+    const db = {
+        objectStoreNames: { contains: () => true },
+        transaction: () => ({
+            objectStore: () => ({
+                add: () => Promise.resolve(1),
+            }),
+        }),
+    };
+    global.indexedDB = {
+        open() {
+            const request = {
+                result: db,
+                error: null,
+                onsuccess: null,
+                onerror: null,
+                onupgradeneeded: null,
+            };
+            queueMicrotask(() => {
+                if (typeof request.onsuccess === 'function') {
+                    request.onsuccess({ target: request });
+                }
+            });
+            return request;
+        },
+    };
+}
+
 function waitFor(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -266,5 +294,41 @@ describe('VoiceDiaryRecorder auto-continue at max duration', () => {
         recorder.stopDurationTracking();
         recorder.stopStream();
         recorder.setState('idle');
+    });
+
+    it('registers background sync when a rollover segment is saved offline', async () => {
+        let registeredTag = null;
+        window.registration = {
+            sync: {
+                register: async (tag) => { registeredTag = tag; },
+            },
+        };
+        mockIndexedDB();
+        navigator.onLine = false;
+
+        await startAndReachMaxDuration(recorder);
+        await recorder.rolloverRecording();
+        await waitFor(30);
+
+        assert.equal(registeredTag, 'sync-recordings');
+        assert.equal(recorder.state, 'recording');
+        assert.equal(fetchCalls.length, 0);
+    });
+
+    it('persists the finished clip if starting the next recorder fails', async () => {
+        await startAndReachMaxDuration(recorder);
+        recorder._beginRecorderOnStream = () => {
+            throw new Error('MediaRecorder restart failed');
+        };
+        let seenError = null;
+        recorder.onError = (err) => { seenError = err; };
+
+        await assert.rejects(
+            () => recorder.rolloverRecording(),
+            /MediaRecorder restart failed/
+        );
+        assert.equal(fetchCalls.length, 1);
+        assert.match(seenError.message, /MediaRecorder restart failed/);
+        assert.equal(recorder.state, 'error');
     });
 });

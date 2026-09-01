@@ -286,21 +286,37 @@ class VoiceDiaryRecorder {
                 return;
             }
 
+            // Persist the finished clip before swapping recorders so a restart
+            // failure cannot drop audio that is already in memory.
+            const persist = this.upload([], { background: true, blob });
+            persist.catch((error) => {
+                console.error('[VoiceDiaryRecorder] Rollover upload failed:', error);
+            });
+
             try {
                 this._beginRecorderOnStream();
                 this.setState('recording');
             } catch (error) {
+                this.audioBlob = blob;
                 this.setState('error');
                 this.stopStream();
+                try {
+                    await persist;
+                } catch (uploadError) {
+                    try {
+                        await this.saveOffline({ blob, background: true });
+                    } catch (offlineError) {
+                        console.error('[VoiceDiaryRecorder] Could not save segment after restart failure:', offlineError);
+                    }
+                    if (this.onRolloverError) {
+                        this.onRolloverError(uploadError);
+                    }
+                }
                 if (this.onError) {
                     this.onError(error);
                 }
                 throw error;
             }
-
-            this.upload([], { background: true, blob }).catch((error) => {
-                console.error('[VoiceDiaryRecorder] Rollover upload failed:', error);
-            });
 
             if (this._stopRequested) {
                 return;
@@ -677,6 +693,8 @@ class VoiceDiaryRecorder {
             transcribeOnly: this.transcribeOnly,
             templateType: this.templateType,
         });
+
+        await this._registerBackgroundSync();
         
         if (background) {
             return;
@@ -690,14 +708,25 @@ class VoiceDiaryRecorder {
                 message: 'Recording saved offline. Will upload when online.',
             });
         }
-        
-        // Register for background sync
-        if ('serviceWorker' in navigator && 'sync' in window.registration) {
-            try {
-                await window.registration.sync.register('sync-recordings');
-            } catch (e) {
-                console.warn('[VoiceDiaryRecorder] Background sync registration failed:', e);
+    }
+
+    /**
+     * Ask the service worker to upload IndexedDB recordings when the network returns.
+     * Used for both manual-stop and background (rollover) offline saves.
+     */
+    async _registerBackgroundSync() {
+        try {
+            let registration = null;
+            if (typeof window !== 'undefined' && window.registration && window.registration.sync) {
+                registration = window.registration;
+            } else if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+                registration = await navigator.serviceWorker.ready;
             }
+            if (registration && registration.sync && typeof registration.sync.register === 'function') {
+                await registration.sync.register('sync-recordings');
+            }
+        } catch (e) {
+            console.warn('[VoiceDiaryRecorder] Background sync registration failed:', e);
         }
     }
     
