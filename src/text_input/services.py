@@ -157,6 +157,16 @@ def ingest_text_entry(
         logger.info(f"Queued classification task for text entry {item.id}")
     except Exception as e:
         logger.warning(f"Could not queue classification task for text entry {item.id}: {e}")
+
+    # Step 9: Let the conversation summarizer sweep this user's sessions. A typed
+    # entry is a natural trigger for closing a long talk that ended on the 240s cap
+    # (no further clip would ever arrive for it). Cheap no-op when nothing is due.
+    try:
+        from src.conversation_summarizer.tasks import summarizer_on_entry_task
+        summarizer_on_entry_task.delay(str(item.id))
+        logger.info(f"Queued conversation summarizer for text entry {item.id}")
+    except Exception as e:
+        logger.warning(f"Could not queue conversation summarizer for text entry {item.id}: {e}")
     
     return item, metadata
 

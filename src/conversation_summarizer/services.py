@@ -353,13 +353,45 @@ def _session_clips_for_group(user_id: int, group_id):
     )
 
 
-def find_sessions(user=None, cfg=None) -> list[Session]:
+def _recent_group_ids(user_id: int, since) -> list:
+    """
+    Group ids whose NEWEST clip is inside the window.
+
+    Deliberately computed per group (not per clip): filtering clips by date would
+    slice a long conversation in half and summarize a partial talk.
+    """
+    from django.db.models import Max
+
+    from src.ingestion.models import IngestItem
+
+    rows = (
+        IngestItem.objects.filter(
+            user_id=user_id,
+            is_deleted=False,
+            item_type="audio",
+            recording_group_id__isnull=False,
+        )
+        .values("recording_group_id")
+        .annotate(last_clip_at=Max("occurred_at"))
+    )
+    return [
+        row["recording_group_id"]
+        for row in rows
+        if row["last_clip_at"] and row["last_clip_at"] >= since
+    ]
+
+
+def find_sessions(user=None, cfg=None, since=None) -> list[Session]:
     """
     All candidate conversations for a user (or every user).
 
     Primary path: the client's own ``recording_group_id`` — present on every clip
     in live data, so no guessing is needed. Fallback (null group id): time-based
     cap-chain detection, for older clients.
+
+    ``since`` bounds the work to recently-active conversations (the pipeline hook
+    passes a window so a per-entry sweep stays cheap). It is only honoured when a
+    specific ``user`` is given; the CLI sweep examines everything.
     """
     from src.ingestion.models import IngestItem
 
@@ -371,16 +403,24 @@ def find_sessions(user=None, cfg=None) -> list[Session]:
         item_type="audio",
         recording_duration_seconds__isnull=False,
     )
+    user_id = None
     if user is not None:
-        qs = qs.filter(user_id=getattr(user, "pk", user))
+        user_id = getattr(user, "pk", user)
+        qs = qs.filter(user_id=user_id)
 
     clips = list(qs.order_by("user_id", "occurred_at", "ingested_at"))
+
+    recent_group_ids = None
+    if since is not None and user_id is not None:
+        recent_group_ids = set(_recent_group_ids(user_id, since))
 
     sessions: list[Session] = []
     grouped: dict = {}
     orphans: list = []
     for clip in clips:
         if clip.recording_group_id:
+            if recent_group_ids is not None and clip.recording_group_id not in recent_group_ids:
+                continue
             grouped.setdefault((clip.user_id, clip.recording_group_id), []).append(clip)
         else:
             orphans.append(clip)
@@ -709,7 +749,7 @@ def _persist(session: Session, user, template, model: str, usage: dict, parsed: 
 
 def summarize_due_sessions(user=None, *, force: bool = False, dry_run: bool = False,
                            llm: Optional[Callable] = None, limit: int = 50,
-                           cfg=None) -> list[SummarizeResult]:
+                           cfg=None, since=None) -> list[SummarizeResult]:
     """
     The sweep: summarize every conversation that is closed and not yet summarized.
 
@@ -720,7 +760,7 @@ def summarize_due_sessions(user=None, *, force: bool = False, dry_run: bool = Fa
 
     results: list[SummarizeResult] = []
     processed = 0
-    for session in find_sessions(user=user, cfg=cfg):
+    for session in find_sessions(user=user, cfg=cfg, since=since):
         if processed >= limit:
             break
 

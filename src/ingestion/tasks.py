@@ -591,6 +591,17 @@ def process_audio_ingest(self, job_id: str):
             logger.info(f"Queued classification task for item {item.id}")
         except Exception as e:
             logger.warning(f"Could not queue classification task for item {item.id}: {e}")
+
+        # Conversation summarizer: a long talk split by the 240s cap is grouped and
+        # summarized automatically as soon as the session closes. The hook is a
+        # cheap no-op mid-conversation, and returns immediately when the user has
+        # turned summarization off (keeping the raw entries).
+        try:
+            from src.conversation_summarizer.tasks import summarizer_on_entry_task
+            summarizer_on_entry_task.delay(str(item.id))
+            logger.info(f"Queued conversation summarizer for item {item.id}")
+        except Exception as e:
+            logger.warning(f"Could not queue conversation summarizer for item {item.id}: {e}")
         
     except Exception as exc:
         logger.error(f"Audio pipeline failed for job {job_id}: {exc}")
