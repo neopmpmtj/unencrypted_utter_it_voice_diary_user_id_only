@@ -47,7 +47,16 @@ from src.intent_router.models import ItemTriageResult
 from src.classification.services import has_calendar_classification, has_list_classification, has_financial_classification, has_todo_classification
 from src.classification.tasks import classify_item_task
 from src.common.config import get_config
-from src.ingestion.models import IngestItem, FileRole, IngestItemEditLog, IngestJob, IngestStatus, JobType, ItemFile
+from src.ingestion.models import (
+    IngestItem,
+    FileRole,
+    IngestItemEditLog,
+    IngestJob,
+    IngestStatus,
+    JobType,
+    ItemFile,
+    RecordingGroupSummary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +152,53 @@ def _recording_fields_for_api(item):
         "recording_duration_seconds": duration,
         "recording_group_id": str(item.recording_group_id) if item.recording_group_id else None,
     }
+
+
+def _attach_group_summaries(request, entries):
+    """
+    P0 — expose ONE summary per recording session to the entries UI.
+
+    A long conversation split by the 240s recording cap becomes several clip
+    entries that all share the same ``recording_group_id``. The canonical
+    summary lives in ``RecordingGroupSummary`` (one row per user + group).
+
+    We attach it to exactly ONE entry of the group — the session's final clip
+    (``RecordingGroupSummary.ended_at``) — so the UI can show the summary once
+    instead of repeating the same text on every clip.
+
+    Additive and query-bounded (one extra query per page); any failure here must
+    never break the entries list, so it degrades to "no summary".
+    """
+    group_ids = {e.get('recording_group_id') for e in entries if e.get('recording_group_id')}
+    if not group_ids:
+        return
+    try:
+        summaries = list(
+            RecordingGroupSummary.objects.filter(
+                user=request.user,
+                recording_group_id__in=group_ids,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - display helper must never raise
+        logger.warning("Could not load recording group summaries: %s", exc)
+        return
+
+    by_group = {str(s.recording_group_id): s for s in summaries}
+    for entry in entries:
+        group_id = entry.get('recording_group_id')
+        summary_row = by_group.get(group_id) if group_id else None
+        if not summary_row or not (summary_row.summary_text or '').strip():
+            continue
+        # Anchor the summary to the last clip of the session only.
+        if summary_row.ended_at and entry.get('occurred_at') != summary_row.ended_at.isoformat():
+            continue
+        entry['summary'] = {
+            'text': summary_row.summary_text,
+            'clip_count': summary_row.clip_count,
+            'total_duration_seconds': summary_row.total_duration_seconds,
+            'started_at': summary_row.started_at.isoformat() if summary_row.started_at else None,
+            'ended_at': summary_row.ended_at.isoformat() if summary_row.ended_at else None,
+        }
 
 
 def _build_entry_response(request, item, content_text, title):
@@ -353,6 +409,7 @@ def entries_list_api(request):
                 content_text = item.content_text or ""
                 title = item.title or ""
                 entries.append(_build_entry_response(request, item, content_text, title))
+            _attach_group_summaries(request, entries)
             return JsonResponse({
                 'entries': entries,
                 'has_more': False,
@@ -434,7 +491,9 @@ def entries_list_api(request):
     
     # Determine if filters are active
     filters_active = bool(search_query or date_preset != 'all' or date_from or date_to)
-    
+
+    _attach_group_summaries(request, entries)
+
     return JsonResponse({
         'entries': entries,
         'has_more': has_more,

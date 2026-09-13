@@ -371,6 +371,24 @@
             attachmentLinksHtml += '</ul></div>';
         }
 
+        // Recording-session summary (one per long conversation; see
+        // _attach_group_summaries in src/entries/views.py).
+        const summaryData = (entry.summary && entry.summary.text) ? entry.summary : null;
+        const summaryMinutes = summaryData && summaryData.total_duration_seconds
+            ? Math.max(1, Math.round(summaryData.total_duration_seconds / 60))
+            : 0;
+        const summaryHtml = summaryData
+            ? '<div class="entry-summary mt-2 rounded border border-border bg-muted/40 p-2">' +
+                  '<div class="text-[13px] font-medium text-foreground mb-1">Summary' +
+                      (summaryData.clip_count ? ' &middot; ' + summaryData.clip_count + ' clips' : '') +
+                      (summaryMinutes ? ' &middot; ' + summaryMinutes + ' min' : '') +
+                  '</div>' +
+                  '<div class="text-xs text-muted-foreground whitespace-pre-wrap">' +
+                      escapeHtml(summaryData.text) +
+                  '</div>' +
+              '</div>'
+            : '';
+
         const tags = entry.tags || [];
         const classificationHtml = tags.length > 0
             ? '<span class="inline-block px-1.5 py-0.5 rounded text-[13px] bg-muted text-muted-foreground">' + escapeHtml(tags.join(', ')) + '</span>'
@@ -387,6 +405,7 @@
                     '</div>' +
                 '</div>' +
                 '<p class="text-xs text-muted-foreground mt-1 line-clamp-2">' + escapeHtml(entry.content_preview) + '</p>' +
+                summaryHtml +
                 '<span class="text-[13px] text-muted-foreground/70 mt-1 inline-block">' + dateLine + '</span>' + attachmentCountHtml +
             '</div>' +
             '<div class="entry-content hidden border-t border-border p-4 bg-secondary/20">' +
