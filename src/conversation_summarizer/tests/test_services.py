@@ -7,6 +7,7 @@ costs nothing: the real ``call_llm`` is never used here.
 
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 
 from django.test import TestCase
 from django.utils import timezone
@@ -318,3 +319,99 @@ class SummarizeSessionTests(TestCase):
         result = services.summarize_for_user_and_group(self.user, self.group_id, llm=fake_llm())
         self.assertEqual(result.action, "created")
         self.assertEqual(result.clip_count, 2)
+
+
+class MapReduceTests(TestCase):
+    """Marathon conversations: chunk the input, then reduce the notes."""
+
+    def setUp(self):
+        self.user = CustomUser.objects.create_user(
+            email="summarizer-mapreduce@example.com", password="***"
+        )
+        prefs = UserPreferences.objects.get(user=self.user)
+        prefs.enable_conversation_summary = True
+        prefs.save(update_fields=["enable_conversation_summary"])
+        self.group_id = uuid.uuid4()
+
+    def _long_session(self, clips=3, chars=400):
+        items = []
+        for index in range(clips):
+            items.append(
+                IngestItem.objects.create(
+                    user=self.user,
+                    item_type="audio",
+                    status="processed",
+                    is_deleted=False,
+                    occurred_at=timezone.now() - timedelta(minutes=60 - index * 5),
+                    content_text="word " * (chars // 5),
+                    recording_duration_seconds=240,
+                    recording_group_id=self.group_id,
+                )
+            )
+        return items
+
+    def test_chunk_clips_never_splits_a_clip(self):
+        clips = self._long_session(clips=4, chars=200)
+        chunks = services.chunk_clips(clips, chunk_chars=250)
+        self.assertGreater(len(chunks), 1)
+        flattened = [clip for chunk in chunks for clip in chunk]
+        self.assertEqual([c.id for c in flattened], [c.id for c in clips], "no clip may be lost or reordered")
+
+    def test_long_transcript_uses_map_reduce(self):
+        clips = self._long_session(clips=3, chars=400)
+        llm = fake_llm()
+        cfg = SimpleNamespace(
+            chunk_chars=300, map_reduce_enabled=True,
+            model="test-model", temperature=0.0, max_output_tokens=100,
+        )
+
+        result = services.summarize_session(
+            services.Session(user_id=self.user.pk, clips=clips, recording_group_id=self.group_id),
+            llm=llm, cfg=cfg,
+        )
+
+        self.assertEqual(result.action, "created")
+        # one call per chunk, plus the final reduce over the notes
+        self.assertGreaterEqual(len(llm.calls), 2)
+        self.assertGreater(
+            SummaryRun.objects.filter(kind="map_reduce_chunk").count(), 0,
+            "each map call must be audited",
+        )
+        row = ConversationSummary.objects.get()
+        self.assertEqual(row.status, SummaryStatus.READY)
+        # the reduce step feeds NOTES, not the raw transcript
+        final_messages = llm.calls[-1]["messages"]
+        self.assertIn("Part 1", " ".join(m.get("content", "") for m in final_messages))
+
+    def test_map_reduce_disabled_keeps_a_single_call(self):
+        clips = self._long_session(clips=3, chars=400)
+        llm = fake_llm()
+        cfg = SimpleNamespace(
+            chunk_chars=300, map_reduce_enabled=False,
+            model="test-model", temperature=0.0, max_output_tokens=100,
+        )
+
+        services.summarize_session(
+            services.Session(user_id=self.user.pk, clips=clips, recording_group_id=self.group_id),
+            llm=llm, cfg=cfg,
+        )
+
+        self.assertEqual(len(llm.calls), 1)
+        self.assertEqual(SummaryRun.objects.filter(kind="map_reduce_chunk").count(), 0)
+
+    def test_short_transcript_does_not_map_reduce(self):
+        # Enough text to pass min_chars, but far below the chunk budget.
+        clips = self._long_session(clips=2, chars=400)
+        llm = fake_llm()
+        cfg = SimpleNamespace(
+            chunk_chars=60_000, map_reduce_enabled=True,
+            model="test-model", temperature=0.0, max_output_tokens=100,
+        )
+
+        services.summarize_session(
+            services.Session(user_id=self.user.pk, clips=clips, recording_group_id=self.group_id),
+            llm=llm, cfg=cfg,
+        )
+
+        self.assertEqual(len(llm.calls), 1)
+        self.assertEqual(SummaryRun.objects.filter(kind="map_reduce_chunk").count(), 0)

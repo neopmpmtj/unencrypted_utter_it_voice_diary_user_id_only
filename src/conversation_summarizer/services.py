@@ -540,6 +540,94 @@ def call_llm(messages, *, model: str, temperature: float, max_output_tokens: int
     }
 
 
+MAP_NOTE_SYSTEM = (
+    "You are given ONE part of a longer conversation transcript. Write compact "
+    "factual notes for that part only: topics, people, decisions, action items and "
+    "numbers. Plain text bullets, no JSON, no preamble. Keep the original language."
+)
+
+
+def chunk_clips(clips, chunk_chars: int) -> list:
+    """
+    Split clips into chunks whose built transcripts stay under ``chunk_chars``.
+
+    Chunking is done on CLIP boundaries (never mid-clip) so a speaker's sentence is
+    never cut in half. A single oversized clip becomes its own chunk.
+    """
+    chunks: list = []
+    current: list = []
+    current_len = 0
+    for clip in clips:
+        length = len(clip.content_text or "") + 80  # clip header overhead
+        if current and current_len + length > chunk_chars:
+            chunks.append(current)
+            current, current_len = [], 0
+        current.append(clip)
+        current_len += length
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _map_reduce_summarize(session: Session, template, context: dict, *, call: Callable,
+                          model: str, temperature: float, max_output_tokens: int,
+                          user, chunk_chars: int) -> tuple[str, dict]:
+    """
+    Summarize a conversation too long to fit in one prompt.
+
+    MAP: each chunk of clips → compact factual notes (plain text).
+    REDUCE: those notes are fed through the normal template as if they were the
+    transcript, producing the final JSON summary.
+
+    Every map call is audited as ``kind='map_reduce_chunk'`` so the extra cost is
+    visible in Summary runs. Returns ``(final_text, total_usage)``.
+    """
+    totals = {"input_tokens": 0, "output_tokens": 0}
+    notes: list[str] = []
+
+    for index, chunk in enumerate(chunk_clips(session.clips, chunk_chars), start=1):
+        chunk_transcript = build_transcript(chunk)
+        messages = [
+            {"role": "system", "content": MAP_NOTE_SYSTEM},
+            {"role": "user", "content": chunk_transcript},
+        ]
+        started = time.monotonic()
+        raw, usage = call(
+            messages, model=model, temperature=temperature, max_output_tokens=max_output_tokens
+        )
+        usage = usage or {}
+        totals["input_tokens"] += usage.get("input_tokens", 0) or 0
+        totals["output_tokens"] += usage.get("output_tokens", 0) or 0
+        SummaryRun.objects.create(
+            user=user,
+            recording_group_id=session.recording_group_id,
+            template=template,
+            template_version=template.version,
+            model=model,
+            kind="map_reduce_chunk",
+            input_chars=len(chunk_transcript),
+            tokens_in=usage.get("input_tokens", 0) or 0,
+            tokens_out=usage.get("output_tokens", 0) or 0,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            ok=True,
+        )
+        notes.append(f"--- Part {index} of a longer conversation ---\n{raw}")
+
+    reduce_context = dict(context)
+    reduce_context["transcript"] = "\n\n".join(notes)
+    reduce_messages = build_messages(
+        template, reduce_context, template.examples.filter(is_active=True)
+    )
+    raw, usage = call(
+        reduce_messages, model=model, temperature=temperature,
+        max_output_tokens=max_output_tokens,
+    )
+    usage = usage or {}
+    totals["input_tokens"] += usage.get("input_tokens", 0) or 0
+    totals["output_tokens"] += usage.get("output_tokens", 0) or 0
+    return raw, totals
+
+
 def _log_usage(user, model: str, usage: dict, ingest_item=None) -> None:
     """Feed the existing token/cost dashboard; never let logging break a summary."""
     try:
@@ -556,6 +644,24 @@ def _log_usage(user, model: str, usage: dict, ingest_item=None) -> None:
 # ---------------------------------------------------------------------------
 # Summarizing
 # ---------------------------------------------------------------------------
+
+def build_session_context(session: Session, user, transcript: str) -> dict:
+    """
+    The values that fill the template placeholders for one conversation.
+
+    Shared by the real pipeline and the admin preview, so what you see in admin is
+    exactly what the model gets in production.
+    """
+    return {
+        "transcript": transcript,
+        "clip_count": session.clip_count,
+        "duration_minutes": round(session.total_duration_seconds / 60),
+        "started_at": session.started_at.strftime("%Y-%m-%d %H:%M UTC") if session.started_at else "?",
+        "ended_at": session.ended_at.strftime("%Y-%m-%d %H:%M UTC") if session.ended_at else "?",
+        "language": session.first.detected_language or "",
+        "user_name": (user.get_full_name() or user.email.split("@")[0]) if user else "",
+    }
+
 
 def summarize_session(session: Session, *, force: bool = False, dry_run: bool = False,
                       llm: Optional[Callable] = None, cfg=None):
@@ -594,8 +700,8 @@ def summarize_session(session: Session, *, force: bool = False, dry_run: bool = 
                                clip_count=session.clip_count)
 
     template = None
-    if cfg is not None and cfg.default_template_id:
-        template = cfg.default_template
+    if cfg is not None and getattr(cfg, "default_template_id", None):
+        template = getattr(cfg, "default_template", None)
     if template is None:
         template = SummaryPromptTemplate.get_default()
     if template is None:
@@ -609,24 +715,35 @@ def summarize_session(session: Session, *, force: bool = False, dry_run: bool = 
     temperature = _cfg_value(cfg, "temperature", DEFAULT_TEMPERATURE)
     max_output_tokens = _cfg_value(cfg, "max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)
 
-    context = {
-        "transcript": transcript,
-        "clip_count": session.clip_count,
-        "duration_minutes": round(session.total_duration_seconds / 60),
-        "started_at": session.started_at.strftime("%Y-%m-%d %H:%M UTC") if session.started_at else "?",
-        "ended_at": session.ended_at.strftime("%Y-%m-%d %H:%M UTC") if session.ended_at else "?",
-        "language": session.first.detected_language or "",
-        "user_name": user.get_full_name() or user.email.split("@")[0],
-    }
+    context = build_session_context(session, user, transcript)
 
     messages = build_messages(template, context, template.examples.filter(is_active=True))
     input_chars = sum(len(m.get("content") or "") for m in messages)
+    context["input_chars"] = input_chars  # informational; not a placeholder
 
     call = llm or call_llm
+    chunk_chars = _cfg_value(cfg, "chunk_chars", CHUNK_CHARS_DEFAULT)
+    use_map_reduce = (
+        bool(_cfg_value(cfg, "map_reduce_enabled", True))
+        and session.clip_count > 1
+        and len(transcript) > chunk_chars
+    )
+
     started = time.monotonic()
     try:
-        raw, usage = call(messages, model=model, temperature=temperature,
-                          max_output_tokens=max_output_tokens)
+        if use_map_reduce:
+            logger.info(
+                "Summarizer: transcript is %d chars (> %d) — map-reduce over %d clips for group %s",
+                len(transcript), chunk_chars, session.clip_count, group_id,
+            )
+            raw, usage = _map_reduce_summarize(
+                session, template, context, call=call, model=model,
+                temperature=temperature, max_output_tokens=max_output_tokens,
+                user=user, chunk_chars=chunk_chars,
+            )
+        else:
+            raw, usage = call(messages, model=model, temperature=temperature,
+                              max_output_tokens=max_output_tokens)
     except Exception as exc:  # noqa: BLE001 - record and continue
         latency_ms = int((time.monotonic() - started) * 1000)
         logger.error("Summarizer LLM call failed for group %s: %s", group_id, exc)

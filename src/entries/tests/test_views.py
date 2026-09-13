@@ -627,6 +627,29 @@ class EntriesListApiTests(TestCase):
         self.assertEqual(entry["summary"]["clip_count"], 3)
         self.assertEqual(entry["summary"]["total_duration_seconds"], 637)
 
+        # P4: every clip of the conversation advertises how many clips it has, so
+        # the UI can present the whole session as one card.
+        for clip_entry in entries:
+            self.assertEqual(clip_entry["group_clip_count"], 3)
+
+    def test_entries_list_api_omits_group_fields_for_unGrouped_entries(self):
+        IngestItem.objects.create(
+            user=self.user,
+            item_type="text",
+            status="processed",
+            is_deleted=False,
+            occurred_at=timezone.now(),
+            title="Plain typed note",
+            content_text="no recording session here",
+        )
+
+        response = self.client.get(reverse("entries:api_list"))
+
+        self.assertEqual(response.status_code, 200)
+        entry = json.loads(response.content)["entries"][0]
+        self.assertNotIn("group_clip_count", entry)
+        self.assertNotIn("summary", entry)
+
     def test_entries_list_api_no_summary_when_group_has_no_row(self):
         IngestItem.objects.create(
             user=self.user,

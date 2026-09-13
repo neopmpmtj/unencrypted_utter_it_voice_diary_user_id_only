@@ -11,7 +11,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import F, Q
+from django.db.models import Count, F, Q
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
@@ -156,23 +156,35 @@ def _recording_fields_for_api(item):
 
 def _attach_group_summaries(request, entries):
     """
-    P0 — expose ONE summary per recording session to the entries UI.
+    P0/P4 — expose conversation-session data to the entries UI.
 
     A long conversation split by the 240s recording cap becomes several clip
-    entries that all share the same ``recording_group_id``. The canonical
-    summary lives in ``ConversationSummary`` (one row per user + group).
+    entries that all share the same ``recording_group_id``. Two things are added:
 
-    We attach it to exactly ONE entry of the group — the session's final clip
-    (``ConversationSummary.ended_at``) — so the UI can show the summary once
-    instead of repeating the same text on every clip.
+    * ``group_clip_count`` on every grouped entry — lets the UI collapse the
+      clips of one conversation into a single card without dropping any of them;
+    * ``summary`` on exactly ONE entry of the group (the session's final clip,
+      matched via ``ConversationSummary.ended_at``) — so the summary is shown once
+      instead of being repeated on every clip.
 
-    Additive and query-bounded (one extra query per page); any failure here must
-    never break the entries list, so it degrades to "no summary".
+    Additive and query-bounded (two extra queries per page); any failure here must
+    never break the entries list, so it degrades to "no grouping, no summary".
     """
     group_ids = {e.get('recording_group_id') for e in entries if e.get('recording_group_id')}
     if not group_ids:
         return
+
     try:
+        counts = {
+            str(row['recording_group_id']): row['total']
+            for row in IngestItem.objects.filter(
+                user=request.user,
+                is_deleted=False,
+                recording_group_id__in=group_ids,
+            )
+            .values('recording_group_id')
+            .annotate(total=Count('id'))
+        }
         summaries = list(
             ConversationSummary.objects.filter(
                 user=request.user,
@@ -186,7 +198,12 @@ def _attach_group_summaries(request, entries):
     by_group = {str(s.recording_group_id): s for s in summaries}
     for entry in entries:
         group_id = entry.get('recording_group_id')
-        summary_row = by_group.get(group_id) if group_id else None
+        if not group_id:
+            continue
+
+        entry['group_clip_count'] = counts.get(group_id, 1)
+
+        summary_row = by_group.get(group_id)
         if not summary_row or not (summary_row.summary_text or '').strip():
             continue
         # Anchor the summary to the last clip of the session only.
@@ -194,6 +211,8 @@ def _attach_group_summaries(request, entries):
             continue
         entry['summary'] = {
             'text': summary_row.summary_text,
+            'title': summary_row.title or '',
+            'conversation_type': summary_row.conversation_type or '',
             'clip_count': summary_row.clip_count,
             'total_duration_seconds': summary_row.total_duration_seconds,
             'started_at': summary_row.started_at.isoformat() if summary_row.started_at else None,

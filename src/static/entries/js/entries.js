@@ -327,18 +327,108 @@
      * Render entries to the DOM
      */
     function renderEntries(entries) {
-        entries.forEach(function(entry) {
-            const entryEl = createEntryElement(entry);
-            entriesListEl.appendChild(entryEl);
+        let index = 0;
+        while (index < entries.length) {
+            const entry = entries[index];
+            const groupId = entry.recording_group_id;
+            const groupSize = entry.group_clip_count || 0;
+
+            if (groupId && groupSize > 1) {
+                // One recorded conversation: every clip of the session is shown
+                // together under a single summary (no clip hidden or merged).
+                const group = [];
+                while (index < entries.length && entries[index].recording_group_id === groupId) {
+                    group.push(entries[index]);
+                    index++;
+                }
+                entriesListEl.appendChild(createGroupElement(group));
+                continue;
+            }
+
+            entriesListEl.appendChild(createEntryElement(entry));
+            index++;
+        }
+    }
+
+    /**
+     * Create ONE card for a whole recorded conversation.
+     *
+     * Long talks are split into clips by the 240s recording cap. Rather than
+     * showing N unrelated-looking entries, the clips of a session are presented
+     * together: the conversation summary on top, then each clip (with its own
+     * timestamp, transcript, attachments and Edit/Delete buttons) nested below.
+     */
+    function createGroupElement(group) {
+        const container = document.createElement('div');
+        container.className = 'rounded-lg border border-border bg-card overflow-hidden transition-all duration-200';
+        container.setAttribute('data-group-container', '');
+
+        const summaryEntry = group.filter(function(e) { return e.summary && e.summary.text; })[0];
+        const summary = summaryEntry ? summaryEntry.summary : null;
+
+        const oldest = group[group.length - 1];
+        const newest = group[0];
+        const totalClips = (summary && summary.clip_count) || group.length;
+        const totalSeconds = (summary && summary.total_duration_seconds)
+            || group.reduce(function(sum, e) { return sum + (e.recording_duration_seconds || 0); }, 0);
+        const minutes = Math.max(1, Math.round(totalSeconds / 60));
+        const startStr = oldest.occurred_at ? formatDate(new Date(oldest.occurred_at)) : '';
+        const endStr = newest.occurred_at ? formatDate(new Date(newest.occurred_at)) : '';
+
+        let headerHtml = '<div class="border-b border-border bg-secondary/30 px-4 py-3">';
+        headerHtml += '<div class="flex items-center justify-between gap-2">';
+        headerHtml += '<span class="text-xs font-medium text-foreground">Conversation</span>';
+        headerHtml += '<span class="text-[13px] text-muted-foreground">' + totalClips + ' clips &middot; ' + minutes + ' min</span>';
+        headerHtml += '</div>';
+        if (startStr) {
+            headerHtml += '<div class="text-[13px] text-muted-foreground/70 mt-0.5">' + escapeHtml(startStr) +
+                (endStr && endStr !== startStr ? ' &rarr; ' + escapeHtml(endStr) : '') + '</div>';
+        }
+        if (summary) {
+            headerHtml += '<div class="entry-summary mt-2 rounded border border-border bg-muted/40 p-2">';
+            headerHtml += '<div class="text-[13px] font-medium text-foreground mb-1">Summary' +
+                (summary.conversation_type ? ' &middot; ' + escapeHtml(summary.conversation_type) : '') +
+                '</div>';
+            headerHtml += '<div class="text-xs text-muted-foreground whitespace-pre-wrap">' +
+                escapeHtml(summary.text) + '</div>';
+            headerHtml += '</div>';
+        } else {
+            headerHtml += '<div class="text-xs text-muted-foreground mt-1">Not summarized yet.</div>';
+        }
+        headerHtml += '</div>';
+        container.innerHTML = headerHtml;
+
+        group.forEach(function(clip) {
+            container.appendChild(createEntryElement(clip, { renderSummary: false, nested: true }));
         });
+        return container;
+    }
+
+    /**
+     * Drop conversation containers that no longer hold any clip (e.g. after the
+     * user deletes the last clip of a session).
+     */
+    function removeEmptyGroupContainers() {
+        const containers = entriesListEl.querySelectorAll('[data-group-container]');
+        for (let i = 0; i < containers.length; i++) {
+            if (!containers[i].querySelector('[data-entry-id]')) {
+                containers[i].remove();
+            }
+        }
     }
 
     /**
      * Create a single entry element
      */
-    function createEntryElement(entry) {
+    function createEntryElement(entry, options) {
+        options = options || {};
+        const nested = options.nested === true;
+        const renderSummaryHere = options.renderSummary !== false;
+
         const card = document.createElement('div');
-        card.className = 'rounded-lg border border-border bg-card overflow-hidden transition-all duration-200';
+        card.className = nested
+            ? 'border-t border-border bg-card overflow-hidden transition-all duration-200'
+            : 'rounded-lg border border-border bg-card overflow-hidden transition-all duration-200';
         card.dataset.entryId = entry.id;
 
         // Format date
@@ -373,7 +463,7 @@
 
         // Recording-session summary (one per long conversation; see
         // _attach_group_summaries in src/entries/views.py).
-        const summaryData = (entry.summary && entry.summary.text) ? entry.summary : null;
+        const summaryData = (renderSummaryHere && entry.summary && entry.summary.text) ? entry.summary : null;
         const summaryMinutes = summaryData && summaryData.total_duration_seconds
             ? Math.max(1, Math.round(summaryData.total_duration_seconds / 60))
             : 0;
@@ -481,6 +571,7 @@
                 expandedEntryId = null;
             }
             card.remove();
+            removeEmptyGroupContainers();
             currentTotalCount -= 1;
             updateEntryCountDisplay();
 
