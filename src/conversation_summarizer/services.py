@@ -74,14 +74,20 @@ from .models import (
     SummaryRun,
     SummaryStatus,
 )
+from src.ingestion.session_mode import (
+    CAP_SECONDS_DEFAULT,
+    CAP_TOLERANCE_DEFAULT,
+    clip_duration_seconds,
+)
+from src.ingestion.session_mode import clip_is_cap as is_cap_clip
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Defaults (used when no SummaryAgentConfig row exists)
+# Defaults (used when no SummaryAgentConfig row exists). CAP_SECONDS_DEFAULT and
+# CAP_TOLERANCE_DEFAULT come from src.ingestion.session_mode (imported above),
+# which owns the cap rule shared with the journal/instruction gate.
 # ---------------------------------------------------------------------------
-CAP_SECONDS_DEFAULT = 240
-CAP_TOLERANCE_DEFAULT = 0.5
 QUIET_SECONDS_DEFAULT = 600
 MIN_CHARS_DEFAULT = 200
 CHUNK_CHARS_DEFAULT = 60_000
@@ -159,33 +165,10 @@ class SummarizeResult:
 # Pure helpers — no DB, no network (the testable "brain")
 # ---------------------------------------------------------------------------
 
-def clip_duration_seconds(item) -> Optional[int]:
-    """
-    Raw recording length in whole seconds.
-
-    Prefer the client-reported ``recording_duration_seconds``: after silence
-    removal the processed audio can be far shorter (a real clip in this diary is
-    335s raw / 59s processed), and the cap test must use the raw value.
-    """
-    if item.recording_duration_seconds is not None:
-        return item.recording_duration_seconds
-    if item.audio_duration_seconds is not None:
-        return int(round(item.audio_duration_seconds))
-    return None
-
-
-def is_cap_clip(item, cap_seconds: int = CAP_SECONDS_DEFAULT,
-                tolerance: float = CAP_TOLERANCE_DEFAULT) -> bool:
-    """
-    True when this clip hit the recording cap — the tell of a long conversation.
-
-    Never test for exact equality: real data contains a clip at 335s (the client
-    is allowed to overrun), so anything at/over ``cap - tolerance`` counts.
-    """
-    duration = clip_duration_seconds(item)
-    if duration is None:
-        return False
-    return duration >= (cap_seconds - tolerance)
+# `clip_duration_seconds` and `is_cap_clip` used to live here; they now live in
+# src/ingestion/session_mode (the single source of truth for the 240s cap rule)
+# and are imported above. The summarizer and the journal/instruction gate can
+# therefore never drift apart on what counts as a "long recording".
 
 
 def session_is_long(clips, cap_seconds: int = CAP_SECONDS_DEFAULT,

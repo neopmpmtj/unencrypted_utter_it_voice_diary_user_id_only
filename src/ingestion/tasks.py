@@ -584,13 +584,41 @@ def process_audio_ingest(self, job_id: str):
 
         broadcast_content_ready(channel_layer, str(item.id), final_text, detected_lang or '')
 
-        # Defer completion broadcast until after classification/calendar; pass plaintext for final UI
+        # Two session modes (Pedro's rule, 2026-09-13):
+        #   instruction → classify → act (this is how calendar/list/financial/todo
+        #                 records come to exist)
+        #   journal     → a recording that hit the 240s cap is personal journaling;
+        #                 it is NEVER classified. Completion + indexing normally
+        #                 happen inside the classification task, so do them here.
         try:
-            from src.classification.tasks import classify_item_task
-            classify_item_task.delay(str(item.id), final_text, detected_lang or '')
-            logger.info(f"Queued classification task for item {item.id}")
+            from src.ingestion.session_mode import (
+                JOURNAL,
+                complete_journal_session,
+                resolve_session_mode,
+            )
+
+            session_mode = resolve_session_mode(item.user_id, item)
         except Exception as e:
-            logger.warning(f"Could not queue classification task for item {item.id}: {e}")
+            logger.warning(
+                f"Could not resolve session mode for item {item.id}; classifying as usual: {e}"
+            )
+            session_mode = "instruction"
+
+        if session_mode == JOURNAL:
+            logger.info(f"Journal session — skipping classification for item {item.id}")
+            complete_journal_session(
+                item,
+                completion_content=final_text,
+                completion_language=detected_lang or "",
+            )
+        else:
+            # Defer completion broadcast until after classification/calendar; pass plaintext for final UI
+            try:
+                from src.classification.tasks import classify_item_task
+                classify_item_task.delay(str(item.id), final_text, detected_lang or '')
+                logger.info(f"Queued classification task for item {item.id}")
+            except Exception as e:
+                logger.warning(f"Could not queue classification task for item {item.id}: {e}")
 
         # Conversation summarizer: a long talk split by the 240s cap is grouped and
         # summarized automatically as soon as the session closes. The hook is a

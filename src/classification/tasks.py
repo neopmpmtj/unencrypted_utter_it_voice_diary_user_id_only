@@ -88,6 +88,33 @@ def classify_item_task(self, item_id: str, completion_content: str = '', complet
     except Exception as e:
         logger.warning("Could not get user config, proceeding with classification: %s", e)
 
+    # ── Journal gate ─────────────────────────────────────────────────────────
+    # A recording session that hit the 240s cap is personal journaling, not an
+    # instruction: it is summarized for recall and deliberately NEVER classified —
+    # no triage, no taxonomy, no parsers, no derived records. Completion and
+    # indexing normally happen at the end of THIS task, so do them here instead.
+    # Defensive layer as well as the pipeline enqueue: the edit API re-classifies
+    # items, and this guard covers every call site.
+    try:
+        from src.ingestion.session_mode import (
+            JOURNAL,
+            complete_journal_session,
+            resolve_session_mode,
+        )
+
+        if resolve_session_mode(item.user_id, item) == JOURNAL:
+            logger.info("Journal session — skipping classification for item %s", item_id)
+            complete_journal_session(
+                item,
+                completion_content=completion_content,
+                completion_language=completion_language,
+            )
+            return {"success": True, "skipped": True, "reason": "journal-session"}
+    except Exception as e:  # noqa: BLE001 - never block an item over mode resolution
+        logger.warning(
+            "Could not evaluate session mode for item %s; classifying as usual: %s", item_id, e
+        )
+
     job, _created = IngestJob.objects.get_or_create(
         user=item.user,
         item=item,
