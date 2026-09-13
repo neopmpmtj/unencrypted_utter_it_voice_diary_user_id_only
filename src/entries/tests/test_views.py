@@ -1019,7 +1019,18 @@ class EntryEditApiTests(TestCase):
         self, mock_upload_drive, mock_verify, mock_get_config
     ):
         """Edit with attachments: number of ItemFile records equals number of files uploaded."""
-        mock_get_config.return_value.storage.audio_temp_path = tempfile.gettempdir()
+        # Bind a REAL storage root. With a bare MagicMock, the local-storage writer
+        # accepted the mock as a path and created a junk tree named after the mock's
+        # repr in the repo CWD (the old "MagicMock/" artifact). A temp root both
+        # fixes that and lets us prove files land where they should.
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        storage = mock_get_config.return_value.storage
+        storage.audio_temp_path = tempfile.gettempdir()
+        storage.save_attachments_to_local_filesystem = True
+        storage.local_storage_root = str(root)
+        storage.local_attachments_subdir = "attachments"
+        storage.local_recordings_subdir = "recordings"
         mock_verify.return_value = True
         mock_upload_drive.return_value = {
             "id": "drive-1",
@@ -1051,6 +1062,11 @@ class EntryEditApiTests(TestCase):
         item.refresh_from_db()
         attachments = ItemFile.objects.filter(item=item, role=FileRole.ATTACHMENT)
         self.assertEqual(attachments.count(), 3, "DB attachment count must match files uploaded")
+        for attachment in attachments:
+            self.assertTrue(
+                str(attachment.storage_url).startswith(str(root)),
+                f"attachment must be written under the test root, got {attachment.storage_url}",
+            )
 
     @patch("src.entries.views.get_config")
     def test_entry_edit_api_multipart_local_filesystem_attachments(
