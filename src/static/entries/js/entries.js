@@ -377,7 +377,9 @@
 
         let headerHtml = '<div class="border-b border-border bg-secondary/30 px-4 py-3">';
         headerHtml += '<div class="flex items-center justify-between gap-2">';
-        headerHtml += '<span class="text-xs font-medium text-foreground">Conversation</span>';
+        headerHtml += '<span class="text-xs font-medium text-foreground">Conversation' +
+            (group[0].is_journal ? ' <span class="inline-block px-1.5 py-0.5 rounded text-[13px] bg-muted text-muted-foreground" title="Personal journaling — summarized, never classified">&#128211; Journal</span>' : '') +
+            '</span>';
         headerHtml += '<span class="text-[13px] text-muted-foreground">' + totalClips + ' clips &middot; ' + minutes + ' min</span>';
         headerHtml += '</div>';
         if (startStr) {
@@ -463,6 +465,12 @@
 
         // Recording-session summary (one per long conversation; see
         // _attach_group_summaries in src/entries/views.py).
+        // J3: journal badge — this entry belongs to a long conversation, which is
+        // summarized for recall and never classified (src/ingestion/session_mode.py).
+        const journalHtml = (!nested && entry.is_journal)
+            ? '<span class="inline-block px-1.5 py-0.5 rounded text-[13px] bg-muted text-muted-foreground" title="Personal journaling — summarized, never classified">&#128211;</span>'
+            : '';
+
         const summaryData = (renderSummaryHere && entry.summary && entry.summary.text) ? entry.summary : null;
         const summaryMinutes = summaryData && summaryData.total_duration_seconds
             ? Math.max(1, Math.round(summaryData.total_duration_seconds / 60))
@@ -490,6 +498,7 @@
                     '<h3 class="text-sm font-medium text-foreground flex-1">' + escapeHtml(entry.title) + '</h3>' +
                     '<div class="flex items-center gap-1.5 shrink-0">' +
                         '<span class="inline-block px-1.5 py-0.5 rounded text-[13px] font-medium ' + typeBadgeClass + '">' + escapeHtml(entry.item_type) + '</span>' +
+                        journalHtml +
                         classificationHtml +
                         '<svg class="expand-indicator h-3 w-3 text-muted-foreground transition-transform duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>' +
                     '</div>' +
