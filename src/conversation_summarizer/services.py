@@ -222,6 +222,27 @@ def session_is_complete(clips, now=None, cap_seconds: int = CAP_SECONDS_DEFAULT,
     return False, "open"
 
 
+def session_is_ready(clips) -> tuple[bool, str]:
+    """
+    Wait until every clip of the conversation has a transcript.
+
+    The hook fires per clip and tranches are finalised independently — the tail's
+    pipeline can finish BEFORE an earlier clip's. Without this gate a summary is
+    produced while a tranche is still being transcribed: that text is silently
+    missing from the summary, and because the row then counts as "done" the
+    conversation is never re-summarized once the transcript lands. (Reproduced by
+    `test_defers_until_every_clip_has_a_transcript`.)
+
+    A clip stuck in ``error`` does not block forever — we summarize what we have.
+    """
+    for clip in clips:
+        if (clip.status or "") == "error":
+            continue
+        if not (clip.content_text or "").strip():
+            return False, "awaiting-transcript"
+    return True, "ready"
+
+
 def build_transcript(clips) -> str:
     """
     One chronological transcript, with a header per clip so the model can see the
@@ -693,6 +714,11 @@ def summarize_session(session: Session, *, force: bool = False, dry_run: bool = 
         return SummarizeResult(session.user_id, group_id, "skipped", reason=complete_reason,
                                clip_count=session.clip_count)
 
+    ready, ready_reason = session_is_ready(session.clips)
+    if not ready and not force:
+        return SummarizeResult(session.user_id, group_id, "skipped", reason=ready_reason,
+                               clip_count=session.clip_count)
+
     transcript = build_transcript(session.clips)
     min_chars = _cfg_value(cfg, "min_chars", MIN_CHARS_DEFAULT)
     if len(transcript) < min_chars and not force:
@@ -872,12 +898,20 @@ def summarize_due_sessions(user=None, *, force: bool = False, dry_run: bool = Fa
 
     Called on every finalized entry, so a session that ended exactly on the cap is
     picked up as soon as *any* later entry arrives — no scheduler required.
+
+    Every session that is looked at but NOT summarized is logged with the reason
+    (``skipped: <group>:<reason>``). Without that, a hook returning
+    "nothing-to-do" is undiagnosable after the fact — which is exactly the
+    situation an undiagnosed 10:45/12:38 incident put us in.
     """
     from src.accounts.models import CustomUser
 
     results: list[SummarizeResult] = []
+    skipped: list[tuple] = []
     processed = 0
-    for session in find_sessions(user=user, cfg=cfg, since=since):
+    sessions = find_sessions(user=user, cfg=cfg, since=since)
+
+    for session in sessions:
         if processed >= limit:
             break
 
@@ -889,18 +923,34 @@ def summarize_due_sessions(user=None, *, force: bool = False, dry_run: bool = Fa
         # Respect the user's preference before doing any work at all.
         session_user = CustomUser.objects.filter(pk=session.user_id).first()
         if not summarization_enabled(session_user, session_cfg):
+            skipped.append((str(session.recording_group_id), "user-disabled"))
             continue
 
         needs, reason = session_needs_summary(session, force=force)
         if not needs:
+            skipped.append((str(session.recording_group_id), reason))
             continue
 
         result = summarize_session(session, force=force, dry_run=dry_run,
                                    llm=llm, cfg=session_cfg)
         if result.action != "skipped":
             processed += 1
+        else:
+            skipped.append((str(session.recording_group_id), result.reason or "skipped"))
         if result.action != "skipped" or dry_run:
             results.append(result)
+
+    if skipped:
+        logger.info(
+            "Conversation summarizer: user=%s examined %d session(s) → %d done, %d skipped: %s",
+            getattr(user, "pk", user), len(sessions), len(results), len(skipped),
+            ", ".join(f"{g[:8]}:{r}" for g, r in skipped[:12]),
+        )
+    elif sessions:
+        logger.info(
+            "Conversation summarizer: user=%s examined %d session(s) → %d done",
+            getattr(user, "pk", user), len(sessions), len(results),
+        )
 
     return results
 

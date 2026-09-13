@@ -95,6 +95,73 @@ class SummarizerHookTaskTests(TestCase):
         )
         self.assertEqual(ConversationSummary.objects.count(), 1)
 
+    @patch("src.conversation_summarizer.services.call_llm", _fake_llm)
+    def test_tail_clip_hook_summarizes_its_own_session(self):
+        """
+        Pedro's exact scenario (reported 2026-09-13):
+
+        A 240s tranche arrives -> nothing to do (the talk may still be going).
+        The remainder clip then arrives -> its own hook must summarize the pair
+        immediately. This is the path that silently did nothing at 10:45 and only
+        caught up two hours later on the next entry.
+        """
+        cap_clip = self._clip(240, 5)
+        first = summarizer_on_entry_task(str(cap_clip.id))
+        self.assertEqual(first["action"], "nothing-to-do")
+        self.assertFalse(ConversationSummary.objects.exists())
+
+        tail = self._clip(16, 1)  # the remainder of the same recording session
+        second = summarizer_on_entry_task(str(tail.id))
+
+        self.assertEqual(second["action"], "summarized")
+        self.assertEqual(second["summarized"][0]["clips"], 2)
+        row = ConversationSummary.objects.get()
+        self.assertEqual(row.clip_count, 2)
+        self.assertEqual(row.status, SummaryStatus.READY)
+
+    @patch("src.conversation_summarizer.services.call_llm", _fake_llm)
+    def test_defers_until_every_clip_has_a_transcript(self):
+        """
+        Tranches are finalised independently: the tail's pipeline can finish BEFORE
+        an earlier clip's. Summarizing then would silently omit that tranche — and
+        because the row would count as "done", the conversation would never be
+        re-summarized once the transcript landed. So the hook must DEFER.
+        """
+        cap_clip = self._clip(240, 5)
+        tail = self._clip(16, 1)
+        # The earlier tranche is still queued for transcription ('new' = in-flight).
+        IngestItem.objects.filter(pk=cap_clip.pk).update(content_text="", status="new")
+
+        calls = []
+
+        def recording_llm(messages, **kwargs):
+            calls.append(messages)
+            return PAYLOAD, {"input_tokens": 5, "output_tokens": 5}
+
+        with patch("src.conversation_summarizer.services.call_llm", recording_llm):
+            first = summarizer_on_entry_task(str(tail.id))
+            self.assertEqual(first["action"], "nothing-to-do")
+            self.assertFalse(
+                ConversationSummary.objects.exists(),
+                "must not summarize while a tranche has no transcript yet",
+            )
+
+            # The earlier tranche finishes -> its hook produces the full summary.
+            IngestItem.objects.filter(pk=cap_clip.pk).update(
+                content_text=TRANSCRIPT, status="processed"
+            )
+            second = summarizer_on_entry_task(str(cap_clip.id))
+
+        self.assertEqual(second["action"], "summarized")
+        row = ConversationSummary.objects.get()
+        self.assertEqual(row.clip_count, 2)
+        self.assertEqual(row.status, SummaryStatus.READY)
+        prompt = " ".join(m["content"] for m in calls[-1])
+        self.assertIn(
+            "long spoken transcript", prompt,
+            "the deferred summary must contain the earlier tranche's text",
+        )
+
     # ------------------------------------------------------------------- no-ops
 
     @patch("src.conversation_summarizer.services.call_llm", _fake_llm)
