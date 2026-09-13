@@ -296,3 +296,51 @@ class GmailRawMessage(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["user", "created_at"])]
+
+
+class RecordingGroupSummary(models.Model):
+    """
+    One canonical summary row per recorded conversation group.
+
+    When a long talk is split into several clips by the 240s recording cap
+    (e.g. [240s, 240s, 51s]), the clips share one ``recording_group_id``
+    (UUID) and this table stores the single AI-generated summary for that
+    group. The summary is written here once; the individual clips also keep a
+    copy in ``IngestItem.summary_text`` for display, but this table is the
+    source of truth and the "done" marker: a group with a row here has been
+    summarized.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="recording_group_summaries",
+    )
+
+    recording_group_id = models.UUIDField(
+        help_text="Shared UUID of the group of clips this summary covers",
+    )
+
+    summary_text = models.TextField(blank=True, default="")
+
+    clip_count = models.PositiveIntegerField(default=0)
+    total_duration_seconds = models.PositiveIntegerField(default=0)
+    started_at = models.DateTimeField(null=True, blank=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    model_used = models.CharField(max_length=100, blank=True, default="")
+
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "recording_group_id"],
+                name="uniq_user_recording_group_summary",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "created_at"]),
+        ]
