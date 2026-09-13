@@ -92,6 +92,29 @@ def session_contains_cap_tranche(user_id: int, group_id, cap_seconds: int = CAP_
     )
 
 
+def cap_groups_for(user_id: int, group_ids, cap_seconds: int = CAP_SECONDS_DEFAULT,
+                   tolerance: float = CAP_TOLERANCE_DEFAULT) -> set:
+    """
+    Which of these recording sessions contain a cap-length tranche (one query).
+
+    Used by the entries API to mark journal conversations for the UI badge.
+    """
+    from src.ingestion.models import IngestItem
+
+    ids = [g for g in group_ids if g]
+    if not ids:
+        return set()
+    rows = (
+        IngestItem.objects.filter(
+            user_id=user_id, is_deleted=False, recording_group_id__in=ids
+        )
+        .filter(_cap_tranche_filter(cap_seconds, tolerance))
+        .values_list("recording_group_id", flat=True)
+        .distinct()
+    )
+    return {str(g) for g in rows}
+
+
 def _legacy_neighbour_is_cap(user_id: int, item, cap_seconds: int, tolerance: float,
                              gap_seconds: int) -> bool:
     """

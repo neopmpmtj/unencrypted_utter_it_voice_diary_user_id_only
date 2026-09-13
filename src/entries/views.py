@@ -57,6 +57,11 @@ from src.ingestion.models import (
     ItemFile,
 )
 from src.conversation_summarizer.models import ConversationSummary
+from src.ingestion.session_mode import (
+    CAP_SECONDS_DEFAULT,
+    CAP_TOLERANCE_DEFAULT,
+    cap_groups_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -159,45 +164,63 @@ def _attach_group_summaries(request, entries):
     P0/P4 — expose conversation-session data to the entries UI.
 
     A long conversation split by the 240s recording cap becomes several clip
-    entries that all share the same ``recording_group_id``. Two things are added:
+    entries that all share the same ``recording_group_id``. Three things are added:
 
     * ``group_clip_count`` on every grouped entry — lets the UI collapse the
       clips of one conversation into a single card without dropping any of them;
     * ``summary`` on exactly ONE entry of the group (the session's final clip,
       matched via ``ConversationSummary.ended_at``) — so the summary is shown once
-      instead of being repeated on every clip.
+      instead of being repeated on every clip;
+    * ``is_journal`` on entries belonging to a long (journal-mode) conversation — a
+      session holding a cap-length tranche. Long talks are summarized for recall
+      and never classified (see ``src/ingestion/session_mode.py``); the UI badges them.
 
-    Additive and query-bounded (two extra queries per page); any failure here must
-    never break the entries list, so it degrades to "no grouping, no summary".
+    Additive and query-bounded (three extra queries per page); any failure here must
+    never break the entries list, so it degrades to "no grouping, no summary, no badge".
     """
     group_ids = {e.get('recording_group_id') for e in entries if e.get('recording_group_id')}
-    if not group_ids:
-        return
 
-    try:
-        counts = {
-            str(row['recording_group_id']): row['total']
-            for row in IngestItem.objects.filter(
-                user=request.user,
-                is_deleted=False,
-                recording_group_id__in=group_ids,
+    counts = {}
+    summaries = []
+    journal_groups = set()
+    if group_ids:
+        try:
+            counts = {
+                str(row['recording_group_id']): row['total']
+                for row in IngestItem.objects.filter(
+                    user=request.user,
+                    is_deleted=False,
+                    recording_group_id__in=group_ids,
+                )
+                .values('recording_group_id')
+                .annotate(total=Count('id'))
+            }
+            summaries = list(
+                ConversationSummary.objects.filter(
+                    user=request.user,
+                    recording_group_id__in=group_ids,
+                )
             )
-            .values('recording_group_id')
-            .annotate(total=Count('id'))
-        }
-        summaries = list(
-            ConversationSummary.objects.filter(
-                user=request.user,
-                recording_group_id__in=group_ids,
-            )
-        )
-    except Exception as exc:  # noqa: BLE001 - display helper must never raise
-        logger.warning("Could not load recording group summaries: %s", exc)
-        return
+            journal_groups = cap_groups_for(request.user.pk, group_ids)
+        except Exception as exc:  # noqa: BLE001 - display helper must never raise
+            logger.warning("Could not load recording group summaries: %s", exc)
+            return
 
     by_group = {str(s.recording_group_id): s for s in summaries}
     for entry in entries:
         group_id = entry.get('recording_group_id')
+
+        # J3: journal badge — this entry belongs to a long talk (a session that holds
+        # a cap-length tranche). Long talks are summarized and never classified.
+        # Ungrouped (legacy) clips can only be judged by their own duration.
+        if group_id:
+            if group_id in journal_groups:
+                entry['is_journal'] = True
+        elif (entry.get('recording_duration_seconds') or 0) >= (
+            CAP_SECONDS_DEFAULT - CAP_TOLERANCE_DEFAULT
+        ):
+            entry['is_journal'] = True
+
         if not group_id:
             continue
 

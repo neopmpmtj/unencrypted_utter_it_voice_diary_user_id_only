@@ -670,6 +670,49 @@ class EntriesListApiTests(TestCase):
         entry = json.loads(response.content)["entries"][0]
         self.assertNotIn("summary", entry)
 
+    def test_entries_list_api_marks_journal_conversations(self):
+        """A session holding a cap-length tranche is a journal talk — badge it."""
+        group_id = uuid.uuid4()
+        base = timezone.now()
+        for index, duration in enumerate([240, 16]):
+            IngestItem.objects.create(
+                user=self.user,
+                item_type="audio",
+                status="processed",
+                is_deleted=False,
+                occurred_at=base + timedelta(seconds=240 * index),
+                title=f"Journal clip {index + 1}",
+                content_text="rambling about my day",
+                recording_duration_seconds=duration,
+                recording_group_id=group_id,
+            )
+
+        response = self.client.get(reverse("entries:api_list"))
+
+        self.assertEqual(response.status_code, 200)
+        entries = json.loads(response.content)["entries"]
+        self.assertEqual(len(entries), 2)
+        self.assertTrue(all(e.get("is_journal") for e in entries))
+
+    def test_entries_list_api_does_not_mark_short_notes(self):
+        IngestItem.objects.create(
+            user=self.user,
+            item_type="audio",
+            status="processed",
+            is_deleted=False,
+            occurred_at=timezone.now(),
+            title="Quick note",
+            content_text="buy milk",
+            recording_duration_seconds=55,
+            recording_group_id=uuid.uuid4(),
+        )
+
+        response = self.client.get(reverse("entries:api_list"))
+
+        self.assertEqual(response.status_code, 200)
+        entry = json.loads(response.content)["entries"][0]
+        self.assertFalse(entry.get("is_journal"))
+
     def test_entries_list_api_falls_back_to_audio_duration_seconds(self):
         IngestItem.objects.create(
             user=self.user,
