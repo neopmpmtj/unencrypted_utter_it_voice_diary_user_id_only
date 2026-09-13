@@ -51,6 +51,9 @@ SWEEP_MAX_AGE_DAYS = 30
 #: Safety valve: never summarize more than this many conversations in one run.
 SWEEP_LIMIT = 25
 
+#: C2 safety net: delay before re-checking a conversation a sweep missed.
+RECHECK_DELAY_SECONDS = 60
+
 
 @shared_task(name="src.conversation_summarizer.tasks.summarizer_on_entry_task")
 def summarizer_on_entry_task(item_id: str) -> dict:
@@ -98,6 +101,14 @@ def summarizer_on_entry_task(item_id: str) -> dict:
                 len(failed), user.pk,
             )
 
+        # C2 safety net: if our own conversation still looks closed-and-unsaved —
+        # the sweep may have run before this clip's row was visible to it — schedule
+        # ONE deferred re-check. Event-driven continuation, not a poller.
+        try:
+            _schedule_recheck_if_still_pending(user, item)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not schedule a summarizer re-check: %s", exc)
+
         return {
             "action": "summarized" if summarized else ("failed" if failed else "nothing-to-do"),
             "item_id": str(item_id),
@@ -109,3 +120,96 @@ def summarizer_on_entry_task(item_id: str) -> dict:
     except Exception as exc:  # noqa: BLE001 - the pipeline must survive anything here
         logger.exception("Conversation summarizer hook failed for item %s: %s", item_id, exc)
         return {"action": "error", "item_id": str(item_id), "error": str(exc)}
+
+
+def _schedule_recheck_if_still_pending(user, item) -> None:
+    """
+    C2 safety net. If the conversation that triggered the hook still looks closed
+    but has no ready summary, schedule ONE deferred re-check of just that
+    conversation (~60s later).
+
+    Why: the sweep is a query, and a conversation can be closed-yet-invisible to
+    it for a moment (the 2026-09-13 10:45 incident). A single re-check 60 seconds
+    later turns a silently-missed trigger into a short delay instead of a two-hour
+    wait for the next entry.
+
+    Deduped with an atomic cache key so repeated hooks cannot stack re-checks;
+    the re-check itself is idempotent, so a stray duplicate is harmless.
+    """
+    group_id = getattr(item, "recording_group_id", None)
+    if not group_id:
+        return
+
+    from .models import ConversationSummary, SummaryStatus
+    from .services import find_sessions, session_is_complete, session_needs_summary
+
+    if ConversationSummary.objects.filter(
+        user=user, recording_group_id=group_id, status=SummaryStatus.READY
+    ).exists():
+        return  # already done
+
+    session = next(
+        (s for s in find_sessions(user=user) if str(s.recording_group_id) == str(group_id)),
+        None,
+    )
+    if session is None:
+        return  # not a long conversation (or not visible at all)
+
+    complete, _reason = session_is_complete(
+        session.clips,
+        cap_seconds=240,  # module defaults; per-user overrides do not change the cue
+    )
+    if not complete:
+        return  # the talk may still be going — normal, no safety net needed
+
+    needs, _needs_reason = session_needs_summary(session)
+    if not needs:
+        return
+
+    try:
+        from django.core.cache import cache
+
+        if not cache.add(f"summarizer:recheck:{user.pk}:{group_id}", 1, timeout=120):
+            return  # a re-check for this conversation was already scheduled
+    except Exception as exc:  # noqa: BLE001 - a cache hiccup must not block the net
+        logger.warning("Summarizer re-check dedupe unavailable: %s", exc)
+
+    summarizer_recheck_task.apply_async(
+        args=[user.pk, str(group_id)], countdown=RECHECK_DELAY_SECONDS
+    )
+    logger.info(
+        "Conversation summarizer: scheduled a re-check for group %s in %ss",
+        group_id, RECHECK_DELAY_SECONDS,
+    )
+
+
+@shared_task(name="src.conversation_summarizer.tasks.summarizer_recheck_task")
+def summarizer_recheck_task(user_id: int, group_id: str) -> dict:
+    """
+    One-shot re-check of a single conversation (C2).
+
+    Runs the normal summarize path for just this user+group. Idempotent: anything
+    already up to date is skipped by the usual gates. Never raises.
+    """
+    from src.accounts.models import CustomUser
+
+    from .models import SummaryAgentConfig
+    from .services import summarization_enabled, summarize_for_user_and_group
+
+    try:
+        user = CustomUser.objects.filter(pk=user_id).first()
+        if user is None:
+            return {"action": "skipped", "reason": "no-user"}
+        cfg = SummaryAgentConfig.get_for_user(user)
+        if not summarization_enabled(user, cfg):
+            return {"action": "skipped", "reason": "disabled-for-user"}
+        result = summarize_for_user_and_group(user, group_id, cfg=cfg)
+        if result.action in ("created", "updated"):
+            logger.info(
+                "Conversation summarizer: re-check produced a summary for group %s (%s clips)",
+                group_id, result.clip_count,
+            )
+        return result.as_dict()
+    except Exception as exc:  # noqa: BLE001 - the safety net must never raise
+        logger.exception("Summarizer re-check failed for group %s: %s", group_id, exc)
+        return {"action": "error", "error": str(exc)}

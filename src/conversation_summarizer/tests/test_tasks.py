@@ -20,7 +20,7 @@ from src.conversation_summarizer.models import (
     SummaryRun,
     SummaryStatus,
 )
-from src.conversation_summarizer.tasks import summarizer_on_entry_task
+from src.conversation_summarizer.tasks import summarizer_on_entry_task, summarizer_recheck_task
 from src.ingestion.models import IngestItem
 
 PAYLOAD = (
@@ -120,7 +120,8 @@ class SummarizerHookTaskTests(TestCase):
         self.assertEqual(row.status, SummaryStatus.READY)
 
     @patch("src.conversation_summarizer.services.call_llm", _fake_llm)
-    def test_defers_until_every_clip_has_a_transcript(self):
+    @patch("src.conversation_summarizer.tasks.summarizer_recheck_task")
+    def test_defers_until_every_clip_has_a_transcript(self, mock_recheck):
         """
         Tranches are finalised independently: the tail's pipeline can finish BEFORE
         an earlier clip's. Summarizing then would silently omit that tranche — and
@@ -214,7 +215,8 @@ class SummarizerHookTaskTests(TestCase):
     # ---------------------------------------------------------------- resilience
 
     @patch("src.conversation_summarizer.services.call_llm", _exploding_llm)
-    def test_llm_failure_is_reported_not_raised(self):
+    @patch("src.conversation_summarizer.tasks.summarizer_recheck_task")
+    def test_llm_failure_is_reported_not_raised(self, mock_recheck):
         self._clip(240, 30)
         tail = self._clip(157, 20)
 
@@ -241,3 +243,80 @@ class SummarizerHookTaskTests(TestCase):
                 source,
                 f"{relative} no longer triggers the conversation summarizer",
             )
+
+
+class SummarizerRecheckTests(TestCase):
+    """C2 safety net: a missed sweep turns into a 60s re-check, not a two-hour wait."""
+
+    def setUp(self):
+        self.user = CustomUser.objects.create_user(
+            email="summarizer-recheck@example.com", password="***"
+        )
+        prefs = UserPreferences.objects.get(user=self.user)
+        prefs.enable_conversation_summary = True
+        prefs.save(update_fields=["enable_conversation_summary"])
+        self.group_id = uuid.uuid4()
+
+    def _clip(self, duration, minutes_ago, group_id=None):
+        return IngestItem.objects.create(
+            user=self.user,
+            item_type="audio",
+            status="processed",
+            is_deleted=False,
+            occurred_at=timezone.now() - timedelta(minutes=minutes_ago),
+            content_text=TRANSCRIPT,
+            recording_duration_seconds=duration,
+            recording_group_id=self.group_id if group_id is None else group_id,
+        )
+
+    @patch("src.conversation_summarizer.tasks.summarizer_recheck_task")
+    @patch("src.conversation_summarizer.tasks.summarize_due_sessions", return_value=[])
+    def test_missed_sweep_schedules_one_recheck(self, mock_sweep, mock_recheck):
+        self._clip(240, 30)
+        tail = self._clip(16, 20)
+
+        result = summarizer_on_entry_task(str(tail.id))
+
+        self.assertEqual(result["action"], "nothing-to-do")
+        mock_recheck.apply_async.assert_called_once()
+        self.assertEqual(mock_recheck.apply_async.call_args.kwargs.get("countdown"), 60)
+
+    @patch("src.conversation_summarizer.tasks.summarizer_recheck_task")
+    @patch("src.conversation_summarizer.tasks.summarize_due_sessions", return_value=[])
+    def test_recheck_is_deduped(self, mock_sweep, mock_recheck):
+        self._clip(240, 30)
+        tail = self._clip(16, 20)
+
+        summarizer_on_entry_task(str(tail.id))
+        summarizer_on_entry_task(str(tail.id))
+
+        self.assertEqual(mock_recheck.apply_async.call_count, 1)
+
+    @patch("src.conversation_summarizer.tasks.summarizer_recheck_task")
+    def test_open_session_schedules_no_recheck(self, mock_recheck):
+        self._clip(240, 3)
+        trigger = self._clip(240, 1)
+
+        summarizer_on_entry_task(str(trigger.id))
+
+        mock_recheck.apply_async.assert_not_called()
+
+    @patch("src.conversation_summarizer.tasks.summarizer_recheck_task")
+    @patch("src.conversation_summarizer.services.call_llm", _fake_llm)
+    def test_successful_summary_schedules_no_recheck(self, mock_recheck):
+        self._clip(240, 30)
+        tail = self._clip(16, 20)
+
+        summarizer_on_entry_task(str(tail.id))
+
+        mock_recheck.apply_async.assert_not_called()
+
+    @patch("src.conversation_summarizer.services.call_llm", _fake_llm)
+    def test_recheck_task_summarizes_a_closed_session(self):
+        self._clip(240, 30)
+        self._clip(16, 20)
+
+        result = summarizer_recheck_task(self.user.pk, str(self.group_id))
+
+        self.assertIn(result["action"], ("created", "updated"))
+        self.assertEqual(ConversationSummary.objects.get().clip_count, 2)
