@@ -163,6 +163,26 @@ case where no further entry would ever arrive, and why the sweep exists.
 
 There is **no Celery beat job and no polling** for this feature.
 
+### Journal vs instruction (long recordings are not classified)
+
+Recordings come in two kinds and are treated differently **by design**:
+
+| Kind | Cue | What happens |
+|------|-----|--------------|
+| **Instruction** | a recording that never reaches the cap | classified → acted upon (calendar, lists, financial, to-dos) |
+| **Journal** | a session that contains a cap-length tranche (the recorder auto-continues, keeping one session id) | summarized for later recall; **never classified** — no triage, no parsers, no derived records. Badged 📓 in the entries UI. |
+
+The cap rule lives in ONE place — `src/ingestion/session_mode.py` — shared by the
+summarizer and the classification gate, so they can never disagree about what
+counts as a long recording. The gate is applied in two places: the pipeline
+enqueues classification only for instruction mode, and `classify_item_task`
+re-checks defensively (so nothing — e.g. an edit — can classify a journal entry).
+Journal entries still get their completion broadcast and retrieval indexing, so
+they remain searchable and chat-able.
+
+A missed trigger (a closed conversation the sweep did not see) self-heals: the
+entry hook schedules **one** deferred re-check of that conversation ~60s later.
+
 ### Per-user on/off
 
 `UserPreferences.enable_conversation_summary` (default **True**) — toggled on the
