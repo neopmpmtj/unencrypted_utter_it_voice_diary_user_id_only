@@ -24,6 +24,7 @@ All first-party Django apps live under `src/`:
 | `translation` | Text translation |
 | `lang_detect` | Language detection |
 | `entries` | Diary entry models and views |
+| `conversation_summarizer` | Groups cap-split clips into conversations and summarizes them (editable prompt, few-shot examples, per-user toggle) |
 | `text_input` | Non-voice text input path ([docs](src/text_input/TEXT_INPUT_README.md)) |
 | `classification` | LLM-based content classification and routing taxonomy |
 | `intent_router` | Intent triage / utterance routing |
@@ -85,6 +86,11 @@ python manage.py migrate
 python manage.py createsuperuser
 ```
 
+> **Fresh box:** the retrieval app stores embeddings in a `vector(1536)` column, so
+> `pgvector` must be installed **before** `migrate` — and once in `template1`, so
+> Django's test runner can create its test database. Full runbook:
+> [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
 ### 4. Run services
 
 **Development server** (HTTP only):
@@ -128,6 +134,97 @@ echo "Your diary entry" | python manage.py ingest_text --email your@email.com
 
 Optional flags: `--user-id`, `--template-type plain|list`, `--title`, `--occurred-at` (ISO 8601).
 
+## Conversation summaries for long recordings
+
+The recorder caps a single recording at **240 seconds**. A longer talk is therefore
+saved as several consecutive clips that share one `recording_group_id`. The
+`conversation_summarizer` app turns those clips back into ONE conversation and
+produces a single summary for it — automatically, with no timer and no manual step.
+
+### How it triggers
+
+Every finalized entry enqueues `summarizer_on_entry_task`:
+
+- `process_audio_ingest` (audio entries) — next to the existing classification enqueue
+- `ingest_text_entry` (typed notes)
+
+Each run does three things, in order:
+
+1. **Respects the user's switch first** — if summaries are off it returns
+   immediately: no LLM call, no writes, raw clips kept as recorded.
+2. **Summarizes the conversation the entry belongs to**, if it is now closed.
+3. **Sweeps the user's other closed-but-unsummarized conversations** (bounded to
+   the last 30 days).
+
+A conversation is *closed* when its last clip is shorter than the cap (the "tail"),
+or when its last clip hit the cap and nothing new arrived within the 10-minute quiet
+window. The quiet rule is what covers a talk that ended exactly on the cap — the one
+case where no further entry would ever arrive, and why the sweep exists.
+
+There is **no Celery beat job and no polling** for this feature.
+
+### Per-user on/off
+
+`UserPreferences.enable_conversation_summary` (default **True**) — toggled on the
+profile page and visible per user in Django admin. When off, the pipeline skips
+summarization entirely and the raw clips are kept exactly as recorded. Turning it
+off never deletes existing summaries, and turning it back on does not backfill
+history (that would be an unbounded, surprise LLM bill).
+
+### Editing the agent (no deploy required)
+
+Everything about the prompt lives in the database, editable in Django admin:
+
+| Admin item | What it controls |
+|------------|------------------|
+| **Summary prompt templates** | System + user prompt with `{{transcript}}`, `{{clip_count}}`, `{{duration_minutes}}`, `{{started_at}}`, `{{ended_at}}`, `{{language}}`, `{{user_name}}`. `version` increments automatically when the prompt text changes, and every summary records the version that produced it. Unknown placeholders are rejected on save. |
+| **Summary examples** | Few-shot input → expected-output pairs, prepended in order |
+| **Summary agent configurations** | One global default row plus optional per-user overrides (model, temperature, cap tolerance, quiet window, minimum length, chunk size) |
+
+**Preview on my last session** (an admin action on any template) runs the selected
+prompt against your most recent conversation and shows the exact messages the model
+receives, the raw reply, the parsed JSON, tokens and latency. It writes **no**
+summary — only a `SummaryRun` audit row — so prompts can be iterated safely.
+
+Output is strict JSON (`type`, `title`, `summary`, `key_points`, `decisions`,
+`action_items`, `people`, `language`) in the language of the transcript. A non-JSON
+reply degrades to a plain-text summary flagged `partial` rather than being lost.
+Transcripts above `chunk_chars` (60 000 by default) are summarized with
+**map-reduce**: each chunk of clips is mapped to notes, then the notes are reduced
+into the final summary.
+
+### Data model
+
+| Model | Purpose |
+|-------|---------|
+| `SummaryAgentConfig` | Global defaults + per-user tuning |
+| `SummaryPromptTemplate` | The editable, versioned prompt |
+| `SummaryExample` | Few-shot examples |
+| `ConversationSummary` | One canonical summary per `(user, recording_group_id)`; `revision` increments when the conversation grows |
+| `SummaryRun` | Audit of every LLM call (model, tokens, latency, error) |
+
+**Nothing is ever removed.** The summary is an addition: all clips stay live, each
+keeping its own transcript, timestamp and attachments. The entries page renders the
+clips of one conversation as a **single card** — summary on top, clips nested below.
+
+### Manual operations
+
+```bash
+python manage.py summarize_recording_groups                  # sweep now (all users)
+python manage.py summarize_recording_groups --dry-run        # preview: no AI, no writes
+python manage.py summarize_recording_groups --user-id 1 --json
+python manage.py summarize_recording_groups --force          # re-summarize even if up to date
+python manage.py summarize_recording_groups --backfill       # rows from existing text, no AI
+```
+
+Tests for the app:
+
+```bash
+python manage.py test src.conversation_summarizer
+```
+
+The service tests inject a fake LLM, so they run offline and cost nothing.
+
 ## Running tests
 
 ```bash
@@ -137,6 +234,10 @@ MASTER_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; prin
 ```
 
 Add `--keepdb` to reuse the test database between runs for faster iteration.
+
+> A test database is copied from `template1`, so `pgvector` must be installed there
+> or test-database creation fails with `type "vector" does not exist`
+> (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) §1.1).
 
 ## Encryption
 
@@ -156,3 +257,10 @@ The encryption module lives at `src/common/utils/encryption.py` and exposes:
 | `src.utter_it.settings.test` | Test runner (eager Celery, test overrides) |
 
 Set via `DJANGO_SETTINGS_MODULE` environment variable.
+
+## Deployment
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for fresh-box prerequisites, the
+routine deploy loop, systemd units and a verification checklist. Static-file and
+Nginx troubleshooting lives in
+[docs/deployment-static-and-nginx.md](docs/deployment-static-and-nginx.md).
