@@ -126,6 +126,20 @@
           </label>
         </div>
 
+        <div class="flex items-center gap-3">
+          <label class="inline-flex items-center gap-2 cursor-pointer select-none" for="id_enable_conversation_summary">
+            <span class="relative">
+              <input type="checkbox" id="id_enable_conversation_summary" name="enable_conversation_summary"
+                     {% if user_preferences_form.enable_conversation_summary.value %}checked{% endif %}
+                     class="sr-only peer">
+              <span class="block w-9 h-5 rounded-full transition-colors duration-200 bg-muted peer-checked:bg-accent"></span>
+              <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 peer-checked:translate-x-4"></span>
+            </span>
+            <span class="text-sm text-foreground">{% trans "Summarize long conversations" %}</span>
+          </label>
+          <p class="text-xs text-muted-foreground">{% trans "When off, long recordings are kept as raw entries with no summary." %}</p>
+        </div>
+
         <div class="space-y-1.5">
           <label for="id_drive_attachment_folder_name" class="block text-sm font-medium text-foreground">{% trans "Drive folder path" %}</label>
           <input type="text" id="id_drive_attachment_folder_name" name="drive_attachment_folder_name"

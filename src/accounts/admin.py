@@ -84,8 +84,8 @@ class UserProfileAdmin(admin.ModelAdmin):
 class UserPreferencesAdmin(admin.ModelAdmin):
     """Admin interface for UserPreferences model."""
     
-    list_display = ['user', 'preferred_language', 'enable_translation', 'audio_retention_days', 'updated_at']
-    list_filter = ['preferred_language', 'enable_translation', 'audio_retention_days']
+    list_display = ['user', 'preferred_language', 'enable_translation', 'enable_conversation_summary', 'audio_retention_days', 'updated_at']
+    list_filter = ['preferred_language', 'enable_translation', 'enable_conversation_summary', 'audio_retention_days']
     search_fields = ['user__email']
     readonly_fields = ['created_at', 'updated_at']
 

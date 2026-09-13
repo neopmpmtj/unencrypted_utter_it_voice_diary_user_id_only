@@ -449,6 +449,17 @@ class UserPreferencesForm(forms.ModelForm):
         help_text=_('When enabled, entries in another language are translated to your stored language.'),
         widget=forms.CheckboxInput(attrs={'class': 'form-check-input'}),
     )
+
+    enable_conversation_summary = forms.BooleanField(
+        required=False,
+        label=_('Summarize long conversations'),
+        help_text=_(
+            'When enabled, recordings split by the 4-minute cap are automatically '
+            'grouped and summarized as one conversation. Turn off to keep only the '
+            'raw entries, exactly as recorded.'
+        ),
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+    )
     
     standalone_app_ui = forms.BooleanField(
         required=False,

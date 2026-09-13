@@ -474,6 +474,15 @@ class UserPreferences(models.Model):
         default=True,
         help_text=_('If True, translate diary content to preferred language when detected language differs')
     )
+
+    enable_conversation_summary = models.BooleanField(
+        default=True,
+        help_text=_(
+            'If True, long recordings split by the 240s cap are automatically summarized '
+            'into one conversation summary. If False, the pipeline skips summarization '
+            'and the raw entries are kept exactly as recorded.'
+        )
+    )
     
     onboarding_completed = models.BooleanField(
         default=False,
