@@ -496,7 +496,7 @@ class UserPreferencesForm(forms.ModelForm):
 
     class Meta:
         model = UserPreferences
-        fields = ['preferred_language', 'enable_translation', 'standalone_app_ui', 'show_recording_timer', 'show_inline_rewrite', 'drive_attachment_folder_name', 'timezone']
+        fields = ['preferred_language', 'enable_translation', 'enable_conversation_summary', 'standalone_app_ui', 'show_recording_timer', 'show_inline_rewrite', 'drive_attachment_folder_name', 'timezone']
 
     def clean_preferred_language(self):
         value = self.cleaned_data.get('preferred_language', '')
