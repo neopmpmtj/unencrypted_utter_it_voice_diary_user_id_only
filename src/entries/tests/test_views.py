@@ -20,7 +20,8 @@ from django.utils import timezone
 from src.accounts.models import CustomUser, GlobalSettings, UserPreferences
 from src.batch_calendar.models import CalendarEvent, CalendarEventStatus
 from src.classification.models import ItemClassificationRun, ItemClassificationSelection, ItemEntityLink
-from src.ingestion.models import IngestItem, IngestItemEditLog, ItemFile, FileRole, RecordingGroupSummary
+from src.ingestion.models import IngestItem, IngestItemEditLog, ItemFile, FileRole
+from src.conversation_summarizer.models import ConversationSummary, SummaryStatus
 from src.intent_router.models import ItemTriageResult
 from src.managed_lists.models import ManagedRecordStatus, TodoItem, TodoRecord
 from src.retrieval.models import ItemRetrievalProjection
@@ -600,7 +601,7 @@ class EntriesListApiTests(TestCase):
                     recording_group_id=group_id,
                 )
             )
-        RecordingGroupSummary.objects.create(
+        ConversationSummary.objects.create(
             user=self.user,
             recording_group_id=group_id,
             summary_text="Group summary text",
@@ -609,6 +610,7 @@ class EntriesListApiTests(TestCase):
             started_at=clips[0].occurred_at,
             ended_at=clips[-1].occurred_at,
             model_used="gpt-4.1-mini",
+            status=SummaryStatus.READY,
         )
 
         url = reverse("entries:api_list")

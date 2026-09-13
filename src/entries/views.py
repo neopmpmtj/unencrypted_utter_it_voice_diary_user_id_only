@@ -55,8 +55,8 @@ from src.ingestion.models import (
     IngestStatus,
     JobType,
     ItemFile,
-    RecordingGroupSummary,
 )
+from src.conversation_summarizer.models import ConversationSummary
 
 logger = logging.getLogger(__name__)
 
@@ -160,10 +160,10 @@ def _attach_group_summaries(request, entries):
 
     A long conversation split by the 240s recording cap becomes several clip
     entries that all share the same ``recording_group_id``. The canonical
-    summary lives in ``RecordingGroupSummary`` (one row per user + group).
+    summary lives in ``ConversationSummary`` (one row per user + group).
 
     We attach it to exactly ONE entry of the group — the session's final clip
-    (``RecordingGroupSummary.ended_at``) — so the UI can show the summary once
+    (``ConversationSummary.ended_at``) — so the UI can show the summary once
     instead of repeating the same text on every clip.
 
     Additive and query-bounded (one extra query per page); any failure here must
@@ -174,7 +174,7 @@ def _attach_group_summaries(request, entries):
         return
     try:
         summaries = list(
-            RecordingGroupSummary.objects.filter(
+            ConversationSummary.objects.filter(
                 user=request.user,
                 recording_group_id__in=group_ids,
             )
