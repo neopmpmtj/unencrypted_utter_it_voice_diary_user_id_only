@@ -59,33 +59,8 @@ def allocate_unique_attachment_filename(
 
 
 def resolve_local_storage_root(config: AppConfig) -> Path:
-    """
-    Absolute path of the local storage root.
-
-    Refuses anything that is not a real, non-empty, absolute path.
-
-    This guards a silent-junk failure mode: an unset or mocked root used to be
-    accepted (``Path(<Mock>)`` resolves against the process CWD), so the storage
-    writer created a stray directory tree in the working directory — the
-    "MagicMock/" artifact that kept reappearing during test runs. A
-    misconfiguration must fail loudly, not litter the filesystem.
-
-    Production is unaffected: ``local_storage_root`` is configured as an absolute
-    path. Callers already handle per-file failures, so an unusable root degrades
-    to "nothing stored" instead of writing somewhere unexpected.
-    """
-    raw = config.storage.local_storage_root
-    if not isinstance(raw, str) or not raw.strip():
-        raise ValueError(
-            "storage.local_storage_root is not configured; expected an absolute path "
-            f"(got {raw!r})"
-        )
-    root = Path(raw.strip()).expanduser()
-    if not root.is_absolute():
-        raise ValueError(
-            f"storage.local_storage_root must be an absolute path (got {raw!r})"
-        )
-    return root.resolve()
+    root = (config.storage.local_storage_root or "").strip()
+    return Path(root).expanduser().resolve()
 
 
 def ensure_local_storage_tree(config: AppConfig) -> None:

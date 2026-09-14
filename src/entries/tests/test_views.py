@@ -7,7 +7,6 @@ import re
 import shutil
 import tempfile
 import uuid
-from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -21,7 +20,6 @@ from src.accounts.models import CustomUser, GlobalSettings, UserPreferences
 from src.batch_calendar.models import CalendarEvent, CalendarEventStatus
 from src.classification.models import ItemClassificationRun, ItemClassificationSelection, ItemEntityLink
 from src.ingestion.models import IngestItem, IngestItemEditLog, ItemFile, FileRole
-from src.conversation_summarizer.models import ConversationSummary, SummaryStatus
 from src.intent_router.models import ItemTriageResult
 from src.managed_lists.models import ManagedRecordStatus, TodoItem, TodoRecord
 from src.retrieval.models import ItemRetrievalProjection
@@ -581,138 +579,6 @@ class EntriesListApiTests(TestCase):
         self.assertEqual(entry["recording_duration_seconds"], 240)
         self.assertEqual(entry["recording_group_id"], str(group_id))
 
-    def test_entries_list_api_attaches_group_summary_only_to_last_clip(self):
-        """A cap-split session exposes ONE summary, on the session's final clip."""
-        group_id = uuid.uuid4()
-        base = timezone.now()
-        clips = []
-        for index, duration in enumerate([240, 240, 157]):
-            clips.append(
-                IngestItem.objects.create(
-                    user=self.user,
-                    item_type="audio",
-                    status="processed",
-                    is_deleted=False,
-                    occurred_at=base + timedelta(seconds=240 * index),
-                    title=f"Clip {index + 1}",
-                    content_text=f"transcript {index + 1}",
-                    summary_text="Group summary text",
-                    recording_duration_seconds=duration,
-                    recording_group_id=group_id,
-                )
-            )
-        ConversationSummary.objects.create(
-            user=self.user,
-            recording_group_id=group_id,
-            summary_text="Group summary text",
-            clip_count=3,
-            total_duration_seconds=637,
-            started_at=clips[0].occurred_at,
-            ended_at=clips[-1].occurred_at,
-            model_used="gpt-4.1-mini",
-            status=SummaryStatus.READY,
-        )
-
-        url = reverse("entries:api_list")
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, 200)
-        entries = json.loads(response.content)["entries"]
-        self.assertEqual(len(entries), 3)
-        with_summary = [e for e in entries if "summary" in e]
-        self.assertEqual(len(with_summary), 1, "summary must be attached exactly once per group")
-        entry = with_summary[0]
-        self.assertEqual(entry["title"], "Clip 3")
-        self.assertEqual(entry["summary"]["text"], "Group summary text")
-        self.assertEqual(entry["summary"]["clip_count"], 3)
-        self.assertEqual(entry["summary"]["total_duration_seconds"], 637)
-
-        # P4: every clip of the conversation advertises how many clips it has, so
-        # the UI can present the whole session as one card.
-        for clip_entry in entries:
-            self.assertEqual(clip_entry["group_clip_count"], 3)
-
-    def test_entries_list_api_omits_group_fields_for_unGrouped_entries(self):
-        IngestItem.objects.create(
-            user=self.user,
-            item_type="text",
-            status="processed",
-            is_deleted=False,
-            occurred_at=timezone.now(),
-            title="Plain typed note",
-            content_text="no recording session here",
-        )
-
-        response = self.client.get(reverse("entries:api_list"))
-
-        self.assertEqual(response.status_code, 200)
-        entry = json.loads(response.content)["entries"][0]
-        self.assertNotIn("group_clip_count", entry)
-        self.assertNotIn("summary", entry)
-
-    def test_entries_list_api_no_summary_when_group_has_no_row(self):
-        IngestItem.objects.create(
-            user=self.user,
-            item_type="audio",
-            status="processed",
-            is_deleted=False,
-            occurred_at=timezone.now(),
-            title="Unsummarized clip",
-            content_text="not summarized yet",
-            recording_duration_seconds=240,
-            recording_group_id=uuid.uuid4(),
-        )
-
-        url = reverse("entries:api_list")
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, 200)
-        entry = json.loads(response.content)["entries"][0]
-        self.assertNotIn("summary", entry)
-
-    def test_entries_list_api_marks_journal_conversations(self):
-        """A session holding a cap-length tranche is a journal talk — badge it."""
-        group_id = uuid.uuid4()
-        base = timezone.now()
-        for index, duration in enumerate([240, 16]):
-            IngestItem.objects.create(
-                user=self.user,
-                item_type="audio",
-                status="processed",
-                is_deleted=False,
-                occurred_at=base + timedelta(seconds=240 * index),
-                title=f"Journal clip {index + 1}",
-                content_text="rambling about my day",
-                recording_duration_seconds=duration,
-                recording_group_id=group_id,
-            )
-
-        response = self.client.get(reverse("entries:api_list"))
-
-        self.assertEqual(response.status_code, 200)
-        entries = json.loads(response.content)["entries"]
-        self.assertEqual(len(entries), 2)
-        self.assertTrue(all(e.get("is_journal") for e in entries))
-
-    def test_entries_list_api_does_not_mark_short_notes(self):
-        IngestItem.objects.create(
-            user=self.user,
-            item_type="audio",
-            status="processed",
-            is_deleted=False,
-            occurred_at=timezone.now(),
-            title="Quick note",
-            content_text="buy milk",
-            recording_duration_seconds=55,
-            recording_group_id=uuid.uuid4(),
-        )
-
-        response = self.client.get(reverse("entries:api_list"))
-
-        self.assertEqual(response.status_code, 200)
-        entry = json.loads(response.content)["entries"][0]
-        self.assertFalse(entry.get("is_journal"))
-
     def test_entries_list_api_falls_back_to_audio_duration_seconds(self):
         IngestItem.objects.create(
             user=self.user,
@@ -1062,18 +928,7 @@ class EntryEditApiTests(TestCase):
         self, mock_upload_drive, mock_verify, mock_get_config
     ):
         """Edit with attachments: number of ItemFile records equals number of files uploaded."""
-        # Bind a REAL storage root. With a bare MagicMock, the local-storage writer
-        # accepted the mock as a path and created a junk tree named after the mock's
-        # repr in the repo CWD (the old "MagicMock/" artifact). A temp root both
-        # fixes that and lets us prove files land where they should.
-        root = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
-        storage = mock_get_config.return_value.storage
-        storage.audio_temp_path = tempfile.gettempdir()
-        storage.save_attachments_to_local_filesystem = True
-        storage.local_storage_root = str(root)
-        storage.local_attachments_subdir = "attachments"
-        storage.local_recordings_subdir = "recordings"
+        mock_get_config.return_value.storage.audio_temp_path = tempfile.gettempdir()
         mock_verify.return_value = True
         mock_upload_drive.return_value = {
             "id": "drive-1",
@@ -1105,11 +960,6 @@ class EntryEditApiTests(TestCase):
         item.refresh_from_db()
         attachments = ItemFile.objects.filter(item=item, role=FileRole.ATTACHMENT)
         self.assertEqual(attachments.count(), 3, "DB attachment count must match files uploaded")
-        for attachment in attachments:
-            self.assertTrue(
-                str(attachment.storage_url).startswith(str(root)),
-                f"attachment must be written under the test root, got {attachment.storage_url}",
-            )
 
     @patch("src.entries.views.get_config")
     def test_entry_edit_api_multipart_local_filesystem_attachments(

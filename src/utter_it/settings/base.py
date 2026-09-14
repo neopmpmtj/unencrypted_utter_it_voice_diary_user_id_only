@@ -59,7 +59,6 @@ INSTALLED_APPS = [
     'src.gigo.apps.GigoConfig',
     'src.gmail_parsers.apps.GmailParsersConfig',
     'src.invoice_parser.apps.InvoiceParserConfig',
-    'src.conversation_summarizer.apps.ConversationSummarizerConfig',
 
 ]
 

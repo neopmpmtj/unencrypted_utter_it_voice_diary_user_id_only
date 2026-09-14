@@ -449,17 +449,6 @@ class UserPreferencesForm(forms.ModelForm):
         help_text=_('When enabled, entries in another language are translated to your stored language.'),
         widget=forms.CheckboxInput(attrs={'class': 'form-check-input'}),
     )
-
-    enable_conversation_summary = forms.BooleanField(
-        required=False,
-        label=_('Summarize long conversations'),
-        help_text=_(
-            'When enabled, recordings split by the 4-minute cap are automatically '
-            'grouped and summarized as one conversation. Turn off to keep only the '
-            'raw entries, exactly as recorded.'
-        ),
-        widget=forms.CheckboxInput(attrs={'class': 'form-check-input'}),
-    )
     
     standalone_app_ui = forms.BooleanField(
         required=False,
@@ -496,7 +485,7 @@ class UserPreferencesForm(forms.ModelForm):
 
     class Meta:
         model = UserPreferences
-        fields = ['preferred_language', 'enable_translation', 'enable_conversation_summary', 'standalone_app_ui', 'show_recording_timer', 'show_inline_rewrite', 'drive_attachment_folder_name', 'timezone']
+        fields = ['preferred_language', 'enable_translation', 'standalone_app_ui', 'show_recording_timer', 'show_inline_rewrite', 'drive_attachment_folder_name', 'timezone']
 
     def clean_preferred_language(self):
         value = self.cleaned_data.get('preferred_language', '')

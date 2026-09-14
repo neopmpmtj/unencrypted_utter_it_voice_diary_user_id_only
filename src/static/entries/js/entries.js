@@ -327,110 +327,18 @@
      * Render entries to the DOM
      */
     function renderEntries(entries) {
-        let index = 0;
-        while (index < entries.length) {
-            const entry = entries[index];
-            const groupId = entry.recording_group_id;
-            const groupSize = entry.group_clip_count || 0;
-
-            if (groupId && groupSize > 1) {
-                // One recorded conversation: every clip of the session is shown
-                // together under a single summary (no clip hidden or merged).
-                const group = [];
-                while (index < entries.length && entries[index].recording_group_id === groupId) {
-                    group.push(entries[index]);
-                    index++;
-                }
-                entriesListEl.appendChild(createGroupElement(group));
-                continue;
-            }
-
-            entriesListEl.appendChild(createEntryElement(entry));
-            index++;
-        }
-    }
-
-    /**
-     * Create ONE card for a whole recorded conversation.
-     *
-     * Long talks are split into clips by the 240s recording cap. Rather than
-     * showing N unrelated-looking entries, the clips of a session are presented
-     * together: the conversation summary on top, then each clip (with its own
-     * timestamp, transcript, attachments and Edit/Delete buttons) nested below.
-     */
-    function createGroupElement(group) {
-        const container = document.createElement('div');
-        container.className = 'rounded-lg border border-border bg-card overflow-hidden transition-all duration-200';
-        container.setAttribute('data-group-container', '');
-
-        const summaryEntry = group.filter(function(e) { return e.summary && e.summary.text; })[0];
-        const summary = summaryEntry ? summaryEntry.summary : null;
-
-        const oldest = group[group.length - 1];
-        const newest = group[0];
-        const totalClips = (summary && summary.clip_count) || group.length;
-        const totalSeconds = (summary && summary.total_duration_seconds)
-            || group.reduce(function(sum, e) { return sum + (e.recording_duration_seconds || 0); }, 0);
-        const minutes = Math.max(1, Math.round(totalSeconds / 60));
-        const startStr = oldest.occurred_at ? formatDate(new Date(oldest.occurred_at)) : '';
-        const endStr = newest.occurred_at ? formatDate(new Date(newest.occurred_at)) : '';
-
-        let headerHtml = '<div class="border-b border-border bg-secondary/30 px-4 py-3">';
-        headerHtml += '<div class="flex items-center justify-between gap-2">';
-        headerHtml += '<span class="text-xs font-medium text-foreground">Conversation' +
-            (group[0].is_journal ? ' <span class="inline-block px-1.5 py-0.5 rounded text-[13px] bg-muted text-muted-foreground" title="Personal journaling — summarized, never classified">&#128211; Journal</span>' : '') +
-            '</span>';
-        headerHtml += '<span class="text-[13px] text-muted-foreground">' + totalClips + ' clips &middot; ' + minutes + ' min</span>';
-        headerHtml += '</div>';
-        if (startStr) {
-            headerHtml += '<div class="text-[13px] text-muted-foreground/70 mt-0.5">' + escapeHtml(startStr) +
-                (endStr && endStr !== startStr ? ' &rarr; ' + escapeHtml(endStr) : '') + '</div>';
-        }
-        if (summary) {
-            headerHtml += '<div class="entry-summary mt-2 rounded border border-border bg-muted/40 p-2">';
-            headerHtml += '<div class="text-[13px] font-medium text-foreground mb-1">Summary' +
-                (summary.conversation_type ? ' &middot; ' + escapeHtml(summary.conversation_type) : '') +
-                '</div>';
-            headerHtml += '<div class="text-xs text-muted-foreground whitespace-pre-wrap">' +
-                escapeHtml(summary.text) + '</div>';
-            headerHtml += '</div>';
-        } else {
-            headerHtml += '<div class="text-xs text-muted-foreground mt-1">Not summarized yet.</div>';
-        }
-        headerHtml += '</div>';
-        container.innerHTML = headerHtml;
-
-        group.forEach(function(clip) {
-            container.appendChild(createEntryElement(clip, { renderSummary: false, nested: true }));
+        entries.forEach(function(entry) {
+            const entryEl = createEntryElement(entry);
+            entriesListEl.appendChild(entryEl);
         });
-        return container;
-    }
-
-    /**
-     * Drop conversation containers that no longer hold any clip (e.g. after the
-     * user deletes the last clip of a session).
-     */
-    function removeEmptyGroupContainers() {
-        const containers = entriesListEl.querySelectorAll('[data-group-container]');
-        for (let i = 0; i < containers.length; i++) {
-            if (!containers[i].querySelector('[data-entry-id]')) {
-                containers[i].remove();
-            }
-        }
     }
 
     /**
      * Create a single entry element
      */
-    function createEntryElement(entry, options) {
-        options = options || {};
-        const nested = options.nested === true;
-        const renderSummaryHere = options.renderSummary !== false;
-
+    function createEntryElement(entry) {
         const card = document.createElement('div');
-        card.className = nested
-            ? 'border-t border-border bg-card overflow-hidden transition-all duration-200'
-            : 'rounded-lg border border-border bg-card overflow-hidden transition-all duration-200';
+        card.className = 'rounded-lg border border-border bg-card overflow-hidden transition-all duration-200';
         card.dataset.entryId = entry.id;
 
         // Format date
@@ -463,30 +371,6 @@
             attachmentLinksHtml += '</ul></div>';
         }
 
-        // Recording-session summary (one per long conversation; see
-        // _attach_group_summaries in src/entries/views.py).
-        // J3: journal badge — this entry belongs to a long conversation, which is
-        // summarized for recall and never classified (src/ingestion/session_mode.py).
-        const journalHtml = (!nested && entry.is_journal)
-            ? '<span class="inline-block px-1.5 py-0.5 rounded text-[13px] bg-muted text-muted-foreground" title="Personal journaling — summarized, never classified">&#128211;</span>'
-            : '';
-
-        const summaryData = (renderSummaryHere && entry.summary && entry.summary.text) ? entry.summary : null;
-        const summaryMinutes = summaryData && summaryData.total_duration_seconds
-            ? Math.max(1, Math.round(summaryData.total_duration_seconds / 60))
-            : 0;
-        const summaryHtml = summaryData
-            ? '<div class="entry-summary mt-2 rounded border border-border bg-muted/40 p-2">' +
-                  '<div class="text-[13px] font-medium text-foreground mb-1">Summary' +
-                      (summaryData.clip_count ? ' &middot; ' + summaryData.clip_count + ' clips' : '') +
-                      (summaryMinutes ? ' &middot; ' + summaryMinutes + ' min' : '') +
-                  '</div>' +
-                  '<div class="text-xs text-muted-foreground whitespace-pre-wrap">' +
-                      escapeHtml(summaryData.text) +
-                  '</div>' +
-              '</div>'
-            : '';
-
         const tags = entry.tags || [];
         const classificationHtml = tags.length > 0
             ? '<span class="inline-block px-1.5 py-0.5 rounded text-[13px] bg-muted text-muted-foreground">' + escapeHtml(tags.join(', ')) + '</span>'
@@ -498,13 +382,11 @@
                     '<h3 class="text-sm font-medium text-foreground flex-1">' + escapeHtml(entry.title) + '</h3>' +
                     '<div class="flex items-center gap-1.5 shrink-0">' +
                         '<span class="inline-block px-1.5 py-0.5 rounded text-[13px] font-medium ' + typeBadgeClass + '">' + escapeHtml(entry.item_type) + '</span>' +
-                        journalHtml +
                         classificationHtml +
                         '<svg class="expand-indicator h-3 w-3 text-muted-foreground transition-transform duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>' +
                     '</div>' +
                 '</div>' +
                 '<p class="text-xs text-muted-foreground mt-1 line-clamp-2">' + escapeHtml(entry.content_preview) + '</p>' +
-                summaryHtml +
                 '<span class="text-[13px] text-muted-foreground/70 mt-1 inline-block">' + dateLine + '</span>' + attachmentCountHtml +
             '</div>' +
             '<div class="entry-content hidden border-t border-border p-4 bg-secondary/20">' +
@@ -580,7 +462,6 @@
                 expandedEntryId = null;
             }
             card.remove();
-            removeEmptyGroupContainers();
             currentTotalCount -= 1;
             updateEntryCountDisplay();
 

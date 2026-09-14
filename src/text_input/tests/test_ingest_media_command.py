@@ -52,10 +52,7 @@ class IngestMediaCommandTests(TestCase):
             files = ItemFile.objects.filter(user=self.user, item=item)
             self.assertEqual(files.count(), 1)
             self.assertEqual(files[0].role, FileRole.ATTACHMENT)
-            # The command preserves the SOURCE basename (sanitized). tempfile
-            # randomises that basename, so compare against the real path name —
-            # the old "tmp" + suffix expectation assumed a fixed temp name.
-            self.assertEqual(files[0].filename, tmp_path.name)
+            self.assertEqual(files[0].filename, "tmp" + tmp_path.suffix)
             self.assertEqual(files[0].bytes, len(b"fake-image-data"))
 
             self.assertIn(str(item.id), out.getvalue())
@@ -98,26 +95,11 @@ class IngestMediaCommandTests(TestCase):
             files = ItemFile.objects.filter(user=self.user, item=item)
             self.assertEqual(files.count(), 2)
             filenames = {f.filename for f in files}
-            self.assertEqual(filenames, {tmp1.name, tmp2.name})
+            self.assertIn("tmp.jpg", filenames)
+            self.assertIn("tmp.mp4", filenames)
         finally:
             tmp1.unlink(missing_ok=True)
             tmp2.unlink(missing_ok=True)
-
-    @patch("src.classification.tasks.classify_item_task")
-    def test_unsafe_source_filename_is_sanitized(self, mock_classify):
-        """A source name with unsafe punctuation is stored sanitized, not verbatim."""
-        tmp = tempfile.NamedTemporaryFile(prefix="weird name!", suffix=".jpg", delete=False)
-        tmp.write(b"fake-image-data")
-        tmp.close()
-        tmp_path = Path(tmp.name)
-        try:
-            call_command("ingest_media", user_id=str(self.user.id), files=[str(tmp_path)])
-
-            stored = ItemFile.objects.get(user=self.user).filename
-            self.assertNotIn("!", stored, "unsafe characters must be stripped")
-            self.assertTrue(stored.endswith(".jpg"), stored)
-        finally:
-            tmp_path.unlink(missing_ok=True)
 
     def test_requires_user_id(self):
         with self.assertRaises(CommandError):

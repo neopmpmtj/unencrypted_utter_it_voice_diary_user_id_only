@@ -11,7 +11,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count, F, Q
+from django.db.models import F, Q
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
@@ -47,21 +47,7 @@ from src.intent_router.models import ItemTriageResult
 from src.classification.services import has_calendar_classification, has_list_classification, has_financial_classification, has_todo_classification
 from src.classification.tasks import classify_item_task
 from src.common.config import get_config
-from src.ingestion.models import (
-    IngestItem,
-    FileRole,
-    IngestItemEditLog,
-    IngestJob,
-    IngestStatus,
-    JobType,
-    ItemFile,
-)
-from src.conversation_summarizer.models import ConversationSummary
-from src.ingestion.session_mode import (
-    CAP_SECONDS_DEFAULT,
-    CAP_TOLERANCE_DEFAULT,
-    cap_groups_for,
-)
+from src.ingestion.models import IngestItem, FileRole, IngestItemEditLog, IngestJob, IngestStatus, JobType, ItemFile
 
 logger = logging.getLogger(__name__)
 
@@ -157,90 +143,6 @@ def _recording_fields_for_api(item):
         "recording_duration_seconds": duration,
         "recording_group_id": str(item.recording_group_id) if item.recording_group_id else None,
     }
-
-
-def _attach_group_summaries(request, entries):
-    """
-    P0/P4 — expose conversation-session data to the entries UI.
-
-    A long conversation split by the 240s recording cap becomes several clip
-    entries that all share the same ``recording_group_id``. Three things are added:
-
-    * ``group_clip_count`` on every grouped entry — lets the UI collapse the
-      clips of one conversation into a single card without dropping any of them;
-    * ``summary`` on exactly ONE entry of the group (the session's final clip,
-      matched via ``ConversationSummary.ended_at``) — so the summary is shown once
-      instead of being repeated on every clip;
-    * ``is_journal`` on entries belonging to a long (journal-mode) conversation — a
-      session holding a cap-length tranche. Long talks are summarized for recall
-      and never classified (see ``src/ingestion/session_mode.py``); the UI badges them.
-
-    Additive and query-bounded (three extra queries per page); any failure here must
-    never break the entries list, so it degrades to "no grouping, no summary, no badge".
-    """
-    group_ids = {e.get('recording_group_id') for e in entries if e.get('recording_group_id')}
-
-    counts = {}
-    summaries = []
-    journal_groups = set()
-    if group_ids:
-        try:
-            counts = {
-                str(row['recording_group_id']): row['total']
-                for row in IngestItem.objects.filter(
-                    user=request.user,
-                    is_deleted=False,
-                    recording_group_id__in=group_ids,
-                )
-                .values('recording_group_id')
-                .annotate(total=Count('id'))
-            }
-            summaries = list(
-                ConversationSummary.objects.filter(
-                    user=request.user,
-                    recording_group_id__in=group_ids,
-                )
-            )
-            journal_groups = cap_groups_for(request.user.pk, group_ids)
-        except Exception as exc:  # noqa: BLE001 - display helper must never raise
-            logger.warning("Could not load recording group summaries: %s", exc)
-            return
-
-    by_group = {str(s.recording_group_id): s for s in summaries}
-    for entry in entries:
-        group_id = entry.get('recording_group_id')
-
-        # J3: journal badge — this entry belongs to a long talk (a session that holds
-        # a cap-length tranche). Long talks are summarized and never classified.
-        # Ungrouped (legacy) clips can only be judged by their own duration.
-        if group_id:
-            if group_id in journal_groups:
-                entry['is_journal'] = True
-        elif (entry.get('recording_duration_seconds') or 0) >= (
-            CAP_SECONDS_DEFAULT - CAP_TOLERANCE_DEFAULT
-        ):
-            entry['is_journal'] = True
-
-        if not group_id:
-            continue
-
-        entry['group_clip_count'] = counts.get(group_id, 1)
-
-        summary_row = by_group.get(group_id)
-        if not summary_row or not (summary_row.summary_text or '').strip():
-            continue
-        # Anchor the summary to the last clip of the session only.
-        if summary_row.ended_at and entry.get('occurred_at') != summary_row.ended_at.isoformat():
-            continue
-        entry['summary'] = {
-            'text': summary_row.summary_text,
-            'title': summary_row.title or '',
-            'conversation_type': summary_row.conversation_type or '',
-            'clip_count': summary_row.clip_count,
-            'total_duration_seconds': summary_row.total_duration_seconds,
-            'started_at': summary_row.started_at.isoformat() if summary_row.started_at else None,
-            'ended_at': summary_row.ended_at.isoformat() if summary_row.ended_at else None,
-        }
 
 
 def _build_entry_response(request, item, content_text, title):
@@ -451,7 +353,6 @@ def entries_list_api(request):
                 content_text = item.content_text or ""
                 title = item.title or ""
                 entries.append(_build_entry_response(request, item, content_text, title))
-            _attach_group_summaries(request, entries)
             return JsonResponse({
                 'entries': entries,
                 'has_more': False,
@@ -533,9 +434,7 @@ def entries_list_api(request):
     
     # Determine if filters are active
     filters_active = bool(search_query or date_preset != 'all' or date_from or date_to)
-
-    _attach_group_summaries(request, entries)
-
+    
     return JsonResponse({
         'entries': entries,
         'has_more': has_more,

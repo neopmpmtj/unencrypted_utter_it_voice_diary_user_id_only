@@ -296,9 +296,3 @@ class GmailRawMessage(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["user", "created_at"])]
-
-
-# NOTE (2026-09-13): RecordingGroupSummary lived here. It has been SUPERSEDED by
-# ``conversation_summarizer.ConversationSummary`` (richer: revision, status, provenance,
-# structured JSON, LLM audit). Existing rows were copied across by migration
-# ingestion/0004_absorb_recording_group_summary. Do not reintroduce it.
