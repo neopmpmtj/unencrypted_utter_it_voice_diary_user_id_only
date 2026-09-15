@@ -238,7 +238,7 @@
 
 {% block extra_js %}
 <script
-  src="{% static 'recordings/js/audio_recorder.js' %}?v=20260915-interruption-1"
+  src="{% static 'recordings/js/audio_recorder.js' %}?v=20260901-duration-2"
   data-swipe-current="voice"
   data-swipe-voice-url="{% url 'recordings:record' %}"
   data-swipe-text-url="{% url 'text_input:page' %}"
@@ -353,7 +353,6 @@
     if (!autoContinueSession) return;
     if (loopRestartInFlight) return;
     var s = recorder.state;
-    if (s === 'interrupted') return;   // recovery handles continuation
     if (s === 'recording' || s === 'paused') {
       prepareNextSegmentUi();
       return;
@@ -416,7 +415,7 @@
 
   function isMainRewriteBlockedByRecorder() {
     var s = recorder.state;
-    return s === 'recording' || s === 'paused' || s === 'interrupted' || s === 'uploading' || s === 'processing';
+    return s === 'recording' || s === 'paused' || s === 'uploading' || s === 'processing';
   }
 
   function syncInlineRewriteControls() {
@@ -504,16 +503,6 @@
       case 'paused':
         recordBtn.disabled = false;
         recordBtn.classList.add('paused');
-        showIcon('resume');
-        break;
-
-      case 'interrupted':
-        // A phone call (or similar) grabbed the mic; the clip so far was saved.
-        // Recording continues automatically once the mic is available again.
-        recordBtn.disabled = true;
-        recordBtn.classList.add('paused');
-        stopBtn.classList.remove('hidden');
-        stopBtn.disabled = false;
         showIcon('resume');
         break;
 
@@ -762,33 +751,6 @@
       );
     }
     console.error('Rollover upload error:', error);
-  };
-
-  recorder.onInterruption = function() {
-    if (window.VDTheme) {
-      window.VDTheme.showToast(
-        '{% trans "Interruption detected — recording saved so far. It will continue automatically when the microphone returns." %}',
-        'info'
-      );
-    }
-  };
-
-  recorder.onInterruptionResolved = function() {
-    if (window.VDTheme) {
-      window.VDTheme.showToast(
-        '{% trans "Microphone is back — recording continued." %}',
-        'info'
-      );
-    }
-  };
-
-  recorder.onInterruptionStuck = function() {
-    if (window.VDTheme) {
-      window.VDTheme.showToast(
-        '{% trans "Still waiting for the microphone. You can stop and start a new recording, or wait — it will continue automatically." %}',
-        'info'
-      );
-    }
   };
 
   // Record button: start / pause / resume
