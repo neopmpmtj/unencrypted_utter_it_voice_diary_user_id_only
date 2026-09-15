@@ -143,3 +143,24 @@ DB user: **`appuser`**, owner of `voicediary_db` only (`rolsuper=f`,
 
 - Static files / Nginx `403`s / `STATIC_ROOT`: `docs/deployment-static-and-nginx.md`
 - App operations ownership + restart rights: workspace `TOOLS.md`
+
+---
+
+## 7. Troubleshooting — audio pipeline / disk
+
+**Symptom:** an entry never gets its text ("processing" seems to hang), or disk alerts fire.
+
+Check the audio chunk scratch directory first (it should be empty between jobs):
+
+```bash
+ls /home/pmpmt/.voicediary/storage/recordings/1/chunks/ | wc -l
+df -h /
+```
+
+Temporary chunk files are derived data and are deleted automatically after a successful
+pipeline run — they are safe to remove when no pipeline job is running. If the directory
+grows into the thousands, look for a runaway split: the 2026-09-15 incident (566 k files /
+~52 GB) was caused by the splitter looping after the final chunk. The fix lives in
+`src/ingestion/audio_services/audio_chunking.py` (stop after the final chunk + chunk-count
+guard) and `src/ingestion/tasks.py` (raise when chunking yields nothing; delete chunk
+files after success). See `docs/CHANGELOG.md`.

@@ -2,6 +2,50 @@
 
 A Django-based voice diary application that records audio, transcribes speech, classifies content, and organises it into structured entries. Supports Google integrations (OAuth, Gmail, Calendar), AI-powered parsing (OpenAI, Gemini), user-scoped architecture, and tiered billing via Stripe.
 
+## Recording & interruption handling
+
+Audio is captured in the browser (MediaRecorder) and uploaded to the checkpointed
+ingest pipeline. Recorder behaviours worth knowing:
+
+- **Segment cap** — a segment rolls over at the configured cap (default 240 s): the
+  finished clip is saved and recording continues seamlessly.
+- **Call / mic interruption** — when a phone call grabs the microphone the recording
+  **auto-pauses** (same as the manual pause button). The user resumes manually (▶); on
+  iOS the old microphone cannot be revived, so the take continues on a fresh mic +
+  new recorder.
+- **One recording per take** — all parts of an interrupted take are merged into a
+  single WAV **at stop** (client-side merge; fallback = separate uploads — nothing is
+  lost), so the diary receives one entry, exactly like a manual pause. The on-screen
+  timer stays continuous across the resume.
+- **Visible feedback** — toasts for *"Saved, continuing recording…"* (segment rollover)
+  and *"Continuing — everything will be saved as one single recording."* (held parts).
+- **Crash safety** — each completed part is also copied to a small local IndexedDB
+  store as soon as it is held. If the browser crashes or the page reloads mid-take,
+  the next visit recovers the parts automatically and uploads them (merged as one
+  recording). The in-progress segment (≤ one cap) is the only thing a crash can still
+  lose.
+
+Full implementation notes, version history (v1 → v3.2) and diagnostic learnings:
+[`docs/INTERRUPTION-HANDLING.md`](docs/INTERRUPTION-HANDLING.md).
+
+## Audio processing pipeline
+
+Uploads are queued to Celery (`src.ingestion.tasks.process_audio_ingest`) as a
+**checkpointed pipeline**, so a retry resumes from the last completed step:
+
+| Step | What it does |
+|------|----------------|
+| `chunking` | files over ~20 MB are split into overlapping chunks (the transcription API has a 25 MB limit) |
+| `silence_removal` | strips quiet stretches (per chunk) |
+| `loudness_normalization` | EBU R128 |
+| `transcription` | OpenAI `gpt-4o-transcribe`, chunk transcripts merged |
+| `lang_detect` → `translation` | detect language; translate when it differs from the user's |
+| `cleanup` | saves the entry, records the GIGO quality row, queues classification, deletes temporary chunk files |
+
+Failures are loud: if chunking produces nothing the job errors (rather than silently
+"completing" with an empty transcript), and the split step is guarded against runaway
+loops. See [`docs/CHANGELOG.md`](docs/CHANGELOG.md).
+
 ## Requirements
 
 - Python 3.10+
@@ -137,6 +181,16 @@ MASTER_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; prin
 ```
 
 Add `--keepdb` to reuse the test database between runs for faster iteration.
+
+## Documentation
+
+| Document | Contents |
+|----------|----------|
+| [`docs/INTERRUPTION-HANDLING.md`](docs/INTERRUPTION-HANDLING.md) | Recorder interruption handling — full version history (v1–v3.2), verbatim code, diagnostic learnings |
+| [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Notable changes, with commits |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Fresh-box prerequisites + deploy runbook |
+| [`docs/deployment-static-and-nginx.md`](docs/deployment-static-and-nginx.md) | Static files / nginx troubleshooting |
+| [`src/text_input/TEXT_INPUT_README.md`](src/text_input/TEXT_INPUT_README.md) | Text input path (web + CLI) |
 
 ## Encryption
 
