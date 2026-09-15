@@ -122,8 +122,20 @@ class AudioChunker:
             chunks = []
             start = 0
             chunk_num = 0
-            
+
+            # Safety net against runaway splitting: the final chunk always ends at
+            # duration_ms, and "start = end - overlap" can then point back inside the
+            # file forever (this used to fill the disk with one-second chunks). Cap the
+            # expected number of chunks — anything beyond that aborts loudly.
+            advance_ms = max(1, chunk_duration_ms - overlap_ms)
+            max_chunks = min(int(duration_ms / advance_ms) + 3, 1000)
+
             while start < duration_ms:
+                if chunk_num >= max_chunks:
+                    raise RuntimeError(
+                        f"Chunking aborted after {chunk_num} chunks (expected ≤ {max_chunks}) — refusing runaway split"
+                    )
+
                 end = min(start + chunk_duration_ms, duration_ms)
                 chunk = audio[start:end]
                 
@@ -140,13 +152,14 @@ class AudioChunker:
                 logger.debug(f"Created chunk {chunk_num}: {start/1000:.1f}s - {end/1000:.1f}s")
                 
                 chunk_num += 1
-                
+
+                # Final chunk reached — stop. (The overlap always points back inside
+                # the file, so advancing with it would loop forever.)
+                if end >= duration_ms:
+                    break
+
                 # Next chunk starts with overlap (to avoid cutting words)
                 start = end - overlap_ms
-                
-                # Prevent infinite loop
-                if start >= duration_ms:
-                    break
             
             logger.info(f"Split audio into {len(chunks)} chunks")
             return chunks

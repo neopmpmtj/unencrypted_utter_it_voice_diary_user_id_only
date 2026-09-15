@@ -405,11 +405,15 @@ def process_audio_ingest(self, job_id: str):
                 chunk_dir = original_path.parent / 'chunks'
                 ensure_directory(chunk_dir)
                 chunk_paths = chunker.split_audio(original_path, chunk_dir)
+                if not chunk_paths:
+                    raise RuntimeError("Audio chunking failed: no chunks produced")
                 save_checkpoint('chunking', {'chunk_paths': [str(p) for p in chunk_paths]})
             else:
                 save_checkpoint('chunking', {'chunk_paths': [str(original_path)]})
         
         chunk_paths = [Path(p) for p in job.checkpoint_data.get('chunk_paths', [str(original_path)])]
+        if not chunk_paths:
+            raise RuntimeError("No audio chunks available to process")
         
         # ===== CHECKPOINT 2: Silence Removal =====
         if 'silence_removal' not in completed:
@@ -562,6 +566,21 @@ def process_audio_ingest(self, job_id: str):
             item.audio_deletion_scheduled_at = timezone.now() + retention_td
 
         item.save()
+
+        # Delete the temporary chunk files now that processing succeeded — the
+        # original recording stays (its retention is handled above).
+        try:
+            tmp_paths = []
+            for key in ('chunk_paths', 'processed_chunks'):
+                for p in (job.checkpoint_data.get(key) or []):
+                    tp = Path(p)
+                    if tp.exists() and tp.resolve() != original_path.resolve():
+                        tmp_paths.append(tp)
+            if tmp_paths:
+                AudioChunker().cleanup_chunks(tmp_paths)
+                logger.info(f"Cleaned up {len(tmp_paths)} temporary chunk files for job {job_id}")
+        except Exception as e:
+            logger.warning(f"Chunk cleanup failed for job {job_id}: {e}")
 
         try:
             from src.gigo.services import record_entry
