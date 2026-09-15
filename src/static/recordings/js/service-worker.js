@@ -4,7 +4,7 @@
  * Provides offline support and background sync for recordings.
  */
 
-const CACHE_NAME = 'voicediary-v5';
+const CACHE_NAME = 'voicediary-v6';
 const OFFLINE_RECORDINGS_STORE = 'offline-recordings';
 
 // Do not precache audio_recorder.js — it must always load the latest auto-restart logic.
@@ -68,6 +68,14 @@ self.addEventListener('fetch', (event) => {
     
     // Skip API requests (let them fail naturally for offline handling)
     if (event.request.url.includes('/api/') || event.request.url.includes('/voice/upload')) {
+        return;
+    }
+
+    // Navigations: network-first so the latest page is always served; cache = offline fallback.
+    if (event.request.mode === 'navigate') {
+        event.respondWith(
+            fetch(event.request).catch(() => caches.match(event.request).then((response) => response || caches.match('/voice/')))
+        );
         return;
     }
 
