@@ -344,6 +344,9 @@ describe('VoiceDiaryRecorder interruption handling (auto-pause + resume + single
         assert.equal(recorder._heldParts.length, 1);
         assert.equal(fetchCalls.length, 0);
 
+        let heldEvents = 0;
+        recorder.onSegmentHeld = () => { heldEvents += 1; };
+
         recorder.startTime = Date.now() - (recorder.maxDuration * 1000);
         await recorder.rolloverRecording();
         await waitFor(40);
@@ -351,6 +354,7 @@ describe('VoiceDiaryRecorder interruption handling (auto-pause + resume + single
         assert.equal(recorder._heldParts.length, 2, 'rollover segment held, not uploaded');
         assert.equal(fetchCalls.length, 0, 'no mid-take uploads');
         assert.equal(recorder.state, 'recording');
+        assert.equal(heldEvents, 1, 'onSegmentHeld fires so the UI can tell the user');
     });
 
     it('watchdog auto-pauses when audio data stops flowing', async () => {

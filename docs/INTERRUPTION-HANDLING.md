@@ -933,3 +933,11 @@ describe('VoiceDiaryRecorder interruption handling', () => {
 - Rollover during a multi-part take holds segments instead of uploading mid-take.
 **Integration points:** constructor (`_heldParts`, `_heldDurationSeconds`); `_resumeWithFreshMic()` (hold, not upload); `stopRecording()` (collect → merge → single upload + fallback path); `rolloverRecording()` (multi-part hold); `getTakeDuration()` + duration interval; `upload()` extension picker (wav); cache-buster `?v=20260915-single-take-1`.
 **Tests:** 12 interruption + 15 rollover regression — all green.
+
+## v3.1 — visible segment-hold feedback (2026-09-15, PM)
+
+**Why:** after v3 shipped, the live test showed the multi-part take looked "stuck" — the cap-length rollover inside a multi-part take *holds* the segment silently (no upload, no toast) — intentional for the single-recording merge, but invisible to the user ("not restarting every 240 s / left dangling").
+
+**Change:** new `onSegmentHeld` callback fires when a rollover segment is held; the UI shows a toast: *"Continuing — everything will be saved as one single recording."* (cache-buster `?v=20260915-single-take-2`). Tests: 12 interruption + 15 rollover (all green).
+
+**Note — same-day server incident:** the audio chunking split loop could run forever once the final chunk was reached (`start = end - overlap` never advanced), producing one-second chunks until the disk filled (first hit: a >20 MB merged take). Fixed in `audio_chunking.py` (break after final chunk + runaway guard) plus guard/cleanup in `tasks.py` (raise when chunking yields nothing; delete chunk files after success). See daily notes 2026-09-15.

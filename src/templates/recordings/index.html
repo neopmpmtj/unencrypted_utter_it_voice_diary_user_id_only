@@ -238,7 +238,7 @@
 
 {% block extra_js %}
 <script
-  src="{% static 'recordings/js/audio_recorder.js' %}?v=20260915-single-take-1"
+  src="{% static 'recordings/js/audio_recorder.js' %}?v=20260915-single-take-2"
   data-swipe-current="voice"
   data-swipe-voice-url="{% url 'recordings:record' %}"
   data-swipe-text-url="{% url 'text_input:page' %}"
@@ -740,6 +740,12 @@
     prepareNextSegmentUi();
     if (window.VDTheme) {
       window.VDTheme.showToast('{% trans "Saved, continuing recording..." %}', 'info');
+    }
+  };
+
+  recorder.onSegmentHeld = function() {
+    if (window.VDTheme) {
+      window.VDTheme.showToast('{% trans "Continuing — everything will be saved as one single recording." %}', 'info');
     }
   };
 

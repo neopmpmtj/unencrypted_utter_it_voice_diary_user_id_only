@@ -57,6 +57,7 @@ class VoiceDiaryRecorder {
         this.onTranscriptionDiscarded = null;  // Called when speech guard rejects (transcribe-only)
         this.onRollover = null;  // Called when a max-duration segment is saved and recording continues
         this.onRolloverError = null;  // Called if a background segment upload fails (recording continues)
+        this.onSegmentHeld = null;  // Called when a segment is held for the final merge (multi-part take)
 
         // Transcribe-only mode: transcribe only, no IngestItem created (used by edit recorder)
         this.transcribeOnly = options.transcribeOnly || false;
@@ -684,6 +685,7 @@ class VoiceDiaryRecorder {
                     this._heldParts.push({ blob, durationSeconds });
                     this._heldDurationSeconds += durationSeconds;
                 }
+                if (this.onSegmentHeld) this.onSegmentHeld(durationSeconds);
             } else {
                 // Persist the finished clip before swapping recorders so a restart
                 // failure cannot drop audio that is already in memory.
