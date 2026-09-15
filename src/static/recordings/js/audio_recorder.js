@@ -58,6 +58,7 @@ class VoiceDiaryRecorder {
         this.onRollover = null;  // Called when a max-duration segment is saved and recording continues
         this.onRolloverError = null;  // Called if a background segment upload fails (recording continues)
         this.onSegmentHeld = null;  // Called when a segment is held for the final merge (multi-part take)
+        this.onHeldPartsRecovered = null;  // Called after an unfinished take was recovered from the local backup
 
         // Transcribe-only mode: transcribe only, no IngestItem created (used by edit recorder)
         this.transcribeOnly = options.transcribeOnly || false;
@@ -85,6 +86,9 @@ class VoiceDiaryRecorder {
         this._resumeInFlight = false;
         this._heldParts = [];                // finished sub-recordings of an interrupted take (merged at stop)
         this._heldDurationSeconds = 0;       // cumulative talk-time of held parts
+        this.heldPartBackup = options.heldPartBackup !== false;  // persist held parts locally (crash safety)
+        this.heldPartRecoveryMinAgeMs = options.heldPartRecoveryMinAgeMs ?? 30000;  // skip parts fresher than this
+        this._recoveryInFlight = false;
         this._probe = null;
         this._lastDataTs = 0;
         this._sawData = false;
@@ -329,6 +333,7 @@ class VoiceDiaryRecorder {
                 if (blob && blob.size) {
                     this._heldParts.push({ blob, durationSeconds });
                     this._heldDurationSeconds += durationSeconds;
+                    this._persistHeldPart(blob, durationSeconds);
                 }
             });
             if (this._stopRequested) return;
@@ -454,6 +459,236 @@ class VoiceDiaryRecorder {
         } finally {
             try { ac.close(); } catch (e) { /* ignore */ }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Crash safety: local backup of held take parts
+    // ------------------------------------------------------------------
+
+    /**
+     * Persist a held part to a small local IndexedDB database so an unfinished
+     * multi-part take survives a crash or reload. Fire-and-forget: never rejects,
+     * never blocks the recording flow; silently skipped when IndexedDB is not
+     * available (the recording itself is unaffected).
+     */
+    async _persistHeldPart(blob, durationSeconds) {
+        if (!this.heldPartBackup || this.transcribeOnly) return;
+        if (typeof indexedDB === 'undefined' || !indexedDB) return;
+        try {
+            if (!blob || !blob.size || typeof blob.arrayBuffer !== 'function') return;
+            // Capture index/group synchronously (before any await): persist calls are
+            // fire-and-forget and must not race each other's part numbering.
+            const index = Math.max(0, this._heldParts.length - 1);
+            const group = this.recordingGroupId || 'nogroup';
+            const buffer = await blob.arrayBuffer();
+            const db = await this._openHeldBackupDB();
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction('held-parts', 'readwrite');
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+                tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
+                tx.objectStore('held-parts').put({
+                    id: group + ':' + index,
+                    group: group,
+                    index: index,
+                    buffer: buffer,
+                    mimeType: blob.type || this.mimeType || 'audio/webm',
+                    durationSeconds: durationSeconds || 0,
+                    updatedAt: Date.now(),
+                });
+            });
+        } catch (error) {
+            console.warn('[VoiceDiaryRecorder] Could not back up held part:', error);
+        }
+    }
+
+    _openHeldBackupDB() {
+        return new Promise((resolve, reject) => {
+            let request;
+            try {
+                request = indexedDB.open('VoiceDiaryHeldPartsDB', 1);
+            } catch (error) {
+                reject(error);
+                return;
+            }
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains('held-parts')) {
+                    db.createObjectStore('held-parts', { keyPath: 'id' });
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Remove the local backup records of one take. Called after the take's audio
+     * has been uploaded (success only) and after a recovered take was uploaded.
+     * Never rejects.
+     */
+    async _deleteHeldParts(group) {
+        if (!this.heldPartBackup) return;
+        if (typeof indexedDB === 'undefined' || !indexedDB) return;
+        if (!group) return;
+        try {
+            const db = await this._openHeldBackupDB();
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction('held-parts', 'readwrite');
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+                tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
+                const store = tx.objectStore('held-parts');
+                const req = store.getAll();
+                req.onsuccess = () => {
+                    (req.result || []).forEach((record) => {
+                        if (record && record.group === group) store.delete(record.id);
+                    });
+                };
+            });
+        } catch (error) {
+            console.warn('[VoiceDiaryRecorder] Could not delete held-part backup:', error);
+        }
+    }
+
+    async _clearHeldPartsBackup() {
+        if (!this.heldPartBackup) return;
+        await this._deleteHeldParts(this.recordingGroupId);
+    }
+
+    _loadHeldPartGroups() {
+        return new Promise((resolve) => {
+            const fail = (error) => {
+                console.warn('[VoiceDiaryRecorder] Could not read held-part backups:', error);
+                resolve({});
+            };
+            let opening;
+            try {
+                opening = this._openHeldBackupDB();
+            } catch (error) {
+                fail(error);
+                return;
+            }
+            opening.then((db) => {
+                let tx;
+                try {
+                    tx = db.transaction('held-parts', 'readonly');
+                } catch (error) {
+                    fail(error);
+                    return;
+                }
+                const req = tx.objectStore('held-parts').getAll();
+                req.onsuccess = () => {
+                    const groups = {};
+                    (req.result || []).forEach((record) => {
+                        if (!record || !record.group) return;
+                        (groups[record.group] = groups[record.group] || []).push(record);
+                    });
+                    resolve(groups);
+                };
+                req.onerror = () => fail(req.error);
+            }).catch(fail);
+        });
+    }
+
+    /**
+     * Crash recovery: upload any held parts left behind by an unfinished take
+     * (browser crashed or was reloaded mid-recording). Runs silently on the
+     * recording page; only when the recorder is idle. Parts fresher than
+     * heldPartRecoveryMinAgeMs are left alone (another tab may still be
+     * recording them) and are recovered on a later visit.
+     * Returns the number of recovered parts.
+     */
+    async recoverHeldParts() {
+        if (!this.heldPartBackup || this.transcribeOnly) return 0;
+        if (this.state !== 'idle' || this._recoveryInFlight) return 0;
+        this._recoveryInFlight = true;
+        let recovered = 0;
+        try {
+            const groups = await this._loadHeldPartGroups();
+            const keys = Object.keys(groups);
+            for (const key of keys) {
+                if (this.state !== 'idle') break;   // user is recording — retry on a later visit
+                const records = groups[key].slice().sort((a, b) => (a.index || 0) - (b.index || 0));
+                const newest = records.reduce((n, r) => Math.max(n, r.updatedAt || 0), 0);
+                if (Date.now() - newest < this.heldPartRecoveryMinAgeMs) continue;
+                const ok = await this._recoverOneTake(key, records);
+                if (ok) recovered += records.length;
+            }
+        } catch (error) {
+            console.warn('[VoiceDiaryRecorder] Held-part recovery failed (will retry):', error);
+        } finally {
+            this._recoveryInFlight = false;
+        }
+        return recovered;
+    }
+
+    async _recoverOneTake(groupKey, records) {
+        if (this.state !== 'idle') return false;
+        const parts = records.map((r) => ({
+            blob: new Blob([r.buffer], { type: r.mimeType || 'audio/webm' }),
+            durationSeconds: r.durationSeconds || 0,
+        }));
+        const totalDuration = parts.reduce((n, p) => n + (p.durationSeconds || 0), 0);
+        const groupId = (groupKey && groupKey !== 'nogroup') ? groupKey : null;
+
+        let merged = null;
+        if (parts.length > 1) {
+            try {
+                merged = await this._mergePartsToWav(parts);
+            } catch (error) {
+                console.warn('[VoiceDiaryRecorder] Recovery merge failed — uploading parts separately:', error);
+            }
+        }
+        if (this.state !== 'idle') return false;
+
+        try {
+            if (merged) {
+                await this._uploadRecoveredBlob(merged, totalDuration, groupId);
+            } else {
+                for (let i = 0; i < parts.length; i++) {
+                    await this._uploadRecoveredBlob(parts[i].blob, parts[i].durationSeconds, groupId);
+                }
+            }
+        } catch (error) {
+            if (error && error.status >= 400 && error.status < 500) {
+                // Unprocessable (e.g. corrupt audio) — drop it so it does not retry forever.
+                console.warn('[VoiceDiaryRecorder] Dropping unrecoverable held part(s):', error);
+                await this._deleteHeldParts(groupKey);
+            } else {
+                console.warn('[VoiceDiaryRecorder] Could not upload recovered take (will retry next visit):', error);
+            }
+            return false;
+        }
+        await this._deleteHeldParts(groupKey);
+        console.warn('[VoiceDiaryRecorder] Recovered unfinished take (' + parts.length + ' part(s), ' + Math.round(totalDuration) + 's)');
+        if (this.onHeldPartsRecovered) {
+            try { this.onHeldPartsRecovered(parts.length, Math.round(totalDuration)); } catch (e) { /* ignore */ }
+        }
+        return true;
+    }
+
+    async _uploadRecoveredBlob(blob, durationSeconds, groupId) {
+        const formData = new FormData();
+        const mime = blob.type || this.mimeType || '';
+        const extension = mime.includes('webm') ? 'webm'
+            : (mime.includes('wav') ? 'wav'
+            : (mime.includes('mp4') ? 'mp4' : 'wav'));
+        formData.append('audio', blob, 'recovered.' + extension);
+        formData.append('template_type', this.templateType);
+        if (durationSeconds) formData.append('recording_duration_seconds', String(Math.round(durationSeconds)));
+        if (groupId) formData.append('recording_group_id', groupId);
+        const response = await fetch(this.uploadUrl, {
+            method: 'POST',
+            body: formData,
+            headers: { 'X-CSRFToken': this.getCsrfToken() },
+        });
+        if (!response.ok) {
+            const error = new Error('Recovery upload failed (HTTP ' + response.status + ')');
+            error.status = response.status;
+            throw error;
+        }
+        return response;
     }
 
     /**
@@ -624,6 +859,7 @@ class VoiceDiaryRecorder {
                 this.audioBlob = merged;
                 this.stopStream();
                 await this.upload(files, { durationSeconds: totalDuration });
+                await this._clearHeldPartsBackup();
                 return;
             }
 
@@ -637,6 +873,7 @@ class VoiceDiaryRecorder {
             }
             this.audioBlob = parts[parts.length - 1].blob;
             await this.upload(files, { durationSeconds: parts[parts.length - 1].durationSeconds });
+            await this._clearHeldPartsBackup();
         }).finally(() => {
             this.stopDurationTracking();
         });
@@ -684,6 +921,7 @@ class VoiceDiaryRecorder {
                 if (blob && blob.size) {
                     this._heldParts.push({ blob, durationSeconds });
                     this._heldDurationSeconds += durationSeconds;
+                    this._persistHeldPart(blob, durationSeconds);
                 }
                 if (this.onSegmentHeld) this.onSegmentHeld(durationSeconds);
             } else {

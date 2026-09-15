@@ -238,7 +238,7 @@
 
 {% block extra_js %}
 <script
-  src="{% static 'recordings/js/audio_recorder.js' %}?v=20260915-single-take-2"
+  src="{% static 'recordings/js/audio_recorder.js' %}?v=20260915-held-backup-1"
   data-swipe-current="voice"
   data-swipe-voice-url="{% url 'recordings:record' %}"
   data-swipe-text-url="{% url 'text_input:page' %}"
@@ -749,6 +749,12 @@
     }
   };
 
+  recorder.onHeldPartsRecovered = function() {
+    if (window.VDTheme) {
+      window.VDTheme.showToast('{% trans "Recovered an unfinished recording — it has been saved to your diary." %}', 'success');
+    }
+  };
+
   recorder.onRolloverError = function(error) {
     if (window.VDTheme) {
       window.VDTheme.showToast(
@@ -776,6 +782,14 @@
       );
     }
   };
+
+  // Crash safety: recover any take parts left behind by an unlucky crash/reload
+  // (runs silently when there is nothing to recover).
+  window.setTimeout(function() {
+    if (recorder && typeof recorder.recoverHeldParts === 'function') {
+      recorder.recoverHeldParts().catch(function() {});
+    }
+  }, 1500);
 
   // Record button: start / pause / resume
   recordBtn.addEventListener('click', function() {

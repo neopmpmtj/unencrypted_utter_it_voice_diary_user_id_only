@@ -941,3 +941,13 @@ describe('VoiceDiaryRecorder interruption handling', () => {
 **Change:** new `onSegmentHeld` callback fires when a rollover segment is held; the UI shows a toast: *"Continuing — everything will be saved as one single recording."* (cache-buster `?v=20260915-single-take-2`). Tests: 12 interruption + 15 rollover (all green).
 
 **Note — same-day server incident:** the audio chunking split loop could run forever once the final chunk was reached (`start = end - overlap` never advanced), producing one-second chunks until the disk filled (first hit: a >20 MB merged take). Fixed in `audio_chunking.py` (break after final chunk + runaway guard) plus guard/cleanup in `tasks.py` (raise when chunking yields nothing; delete chunk files after success). See daily notes 2026-09-15.
+
+## v3.2 — local crash-safety backup for held parts (2026-09-15, PM — same day, second feature)
+**Why:** in a multi-part take the held parts lived only in the recorder's memory until stop — a browser crash/reload lost them. Built to Pedro's reliability bar: *fail-safe — nothing in the normal recording flow can ever be affected*.
+**How it works:**
+- At every hold (resume & rollover) each part is copied to a small local IndexedDB database (`VoiceDiaryHeldPartsDB`, store `held-parts`, keyed `group:index`, stored as ArrayBuffer). Fire-and-forget; never blocks recording; silently skipped when IndexedDB is unavailable.
+- After a successful stop-upload (merged or fallback) the take's backup records are deleted — success only.
+- On recording-page load, `recoverHeldParts()` uploads any parts left behind by an unfinished take: merged into ONE recording when possible, else uploaded as separate grouped clips (nothing lost). Parts fresher than 30 s are left alone (another tab may be recording). 4xx-rejected corrupt data is dropped; network/5xx failures keep records for the next visit.
+- UI: toast "Recovered an unfinished recording — it has been saved to your diary." Cache-buster `?v=20260915-held-backup-1`.
+**Limitations (by design):** the in-progress segment (up to the cap) can still be lost in a crash — same exposure as any normal take; the backup protects the completed parts.
+**Tests:** 17 interruption + 15 rollover green (5 new crash-safety tests).

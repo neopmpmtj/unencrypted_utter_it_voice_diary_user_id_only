@@ -372,4 +372,90 @@ describe('VoiceDiaryRecorder interruption handling (auto-pause + resume + single
         assert.equal(recorder.state, 'recording');
         await recorder.stopRecording();
     });
+
+    it('resume backs up the held part to the local crash-safety store', async () => {
+        recorder = newRecorder();
+        const persisted = [];
+        recorder._persistHeldPart = async (blob, durationSeconds) => { persisted.push({ blob, durationSeconds }); };
+
+        await recorder.startRecording();
+        recorder.startTime = Date.now() - 8000;
+        currentTrack(recorder).dispatch('mute');
+        await waitFor(30);
+
+        await recorder.resumeRecording();
+        await waitFor(200);
+
+        assert.equal(persisted.length, 1, 'part 1 backup attempted');
+        assert.ok(persisted[0].blob && persisted[0].blob.size > 0, 'backed-up blob has data');
+        assert.ok(persisted[0].durationSeconds >= 5, 'duration captured');
+    });
+
+    it('a successful merge upload clears the local backup', async () => {
+        recorder = newRecorder();
+        await recorder.startRecording();
+        recorder.startTime = Date.now() - 8000;
+        currentTrack(recorder).dispatch('mute');
+        await waitFor(30);
+        await recorder.resumeRecording();
+        await waitFor(200);
+
+        let cleared = 0;
+        recorder._clearHeldPartsBackup = async () => { cleared += 1; };
+        recorder._mergePartsToWav = async () => new Blob([new Uint8Array(2048)], { type: 'audio/wav' });
+
+        await recorder.stopRecording();
+        await waitFor(40);
+
+        assert.equal(cleared, 1, 'backup cleared only after the upload succeeded');
+    });
+
+    it('recoverHeldParts uploads an unfinished take as ONE merged recording and clears the store', async () => {
+        recorder = newRecorder({ heldPartRecoveryMinAgeMs: 0 });
+        const old = Date.now() - 60000;
+        recorder._loadHeldPartGroups = async () => ({
+            'group-abc': [
+                { id: 'group-abc:0', group: 'group-abc', index: 0, buffer: new ArrayBuffer(64), mimeType: 'audio/webm', durationSeconds: 60, updatedAt: old },
+                { id: 'group-abc:1', group: 'group-abc', index: 1, buffer: new ArrayBuffer(64), mimeType: 'audio/webm', durationSeconds: 120, updatedAt: old },
+            ],
+        });
+        let mergedParts = 0;
+        recorder._mergePartsToWav = async (parts) => { mergedParts = parts.length; return new Blob([new Uint8Array(128)], { type: 'audio/wav' }); };
+        let deleted = null;
+        recorder._deleteHeldParts = async (group) => { deleted = group; };
+
+        const count = await recorder.recoverHeldParts();
+
+        assert.equal(count, 2);
+        assert.equal(fetchCalls.length, 1, 'exactly one upload — the merged recovery');
+        const body = fetchCalls[0].opts.body;
+        assert.equal(body.get('recording_group_id'), 'group-abc');
+        assert.equal(body.get('recording_duration_seconds'), '180');
+        assert.equal(mergedParts, 2, 'both parts merged');
+        assert.equal(deleted, 'group-abc', 'store cleared after upload');
+    });
+
+    it('recovery leaves fresh parts alone (another tab may still be recording)', async () => {
+        recorder = newRecorder({ heldPartRecoveryMinAgeMs: 30000 });
+        recorder._loadHeldPartGroups = async () => ({
+            'fresh-group': [
+                { id: 'fresh-group:0', group: 'fresh-group', index: 0, buffer: new ArrayBuffer(64), mimeType: 'audio/webm', durationSeconds: 10, updatedAt: Date.now() },
+            ],
+        });
+
+        const count = await recorder.recoverHeldParts();
+
+        assert.equal(count, 0);
+        assert.equal(fetchCalls.length, 0, 'nothing uploaded for fresh parts');
+    });
+
+    it('recovery does not run while a recording is in progress', async () => {
+        recorder = newRecorder();
+        await recorder.startRecording();
+        recorder._loadHeldPartGroups = async () => { throw new Error('must not read the store'); };
+
+        const count = await recorder.recoverHeldParts();
+
+        assert.equal(count, 0);
+    });
 });
