@@ -70,6 +70,26 @@ class VoiceDiaryRecorder {
         // Shared by consecutive clips until the user starts a new Record session
         this.recordingGroupId = null;
 
+        // Interruption handling (v2): when the mic is grabbed (phone call or similar) the
+        // recording AUTO-PAUSES — the same pause as the manual pause button. The user resumes
+        // manually. On iOS the old mic is never handed back to the old recorder, so resuming
+        // after an interruption continues on a FRESH mic + new recorder (same recording group).
+        this.pauseOnInterruption = options.pauseOnInterruption ?? !this.transcribeOnly;
+        this.interruptionWatchdogMs = options.interruptionWatchdogMs ?? 15000;
+        this.interruptionResumeRetryMs = options.interruptionResumeRetryMs ?? 1200;
+        this.interruptionMaxResumeAttempts = options.interruptionMaxResumeAttempts ?? 3;
+        this.resumeProbeMs = options.resumeProbeMs ?? 4000;
+        this._resumeNeedsFreshMic = false;   // mic was lost; next resume needs a fresh handshake
+        this._resumeInFlight = false;
+        this._pausedSegmentSaved = false;
+        this._probe = null;
+        this._lastDataTs = 0;
+        this._sawData = false;
+        this._trackBound = null;
+        this._trackHandlers = null;
+        this.onInterruptionPause = null;             // Called when an interruption auto-pauses the recording
+        this.onInterruptionContinueBlocked = null;   // Called when resuming needs a mic that is not back yet
+
         // Quota state (populated by applyQuota or fetchAndApplyQuota)
         this.quotaData = null;
     }
@@ -156,11 +176,13 @@ class VoiceDiaryRecorder {
         this.pauseDuration = 0;
         this.pauseStartTime = null;
         this.startTime = Date.now();
-        this.mediaRecorder.ondataavailable = (e) => {
-            if (e.data && e.data.size > 0) {
-                this.audioChunks.push(e.data);
-            }
-        };
+        this._lastDataTs = Date.now();
+        this._sawData = false;
+        this.mediaRecorder.ondataavailable = (e) => this._handleData(e);
+        const track = (typeof this.stream.getAudioTracks === 'function')
+            ? this.stream.getAudioTracks()[0]
+            : null;
+        this._bindTrack(track);
         this.mediaRecorder.start(1000);
     }
 
@@ -200,6 +222,184 @@ class VoiceDiaryRecorder {
     }
 
     /**
+     * Handle a data chunk from any active MediaRecorder (segment, rollover, or resume probe).
+     */
+    _handleData(e) {
+        const size = e.data ? e.data.size : 0;
+        if (size > 0) {
+            this.audioChunks.push(e.data);
+            this._sawData = true;
+        }
+        this._lastDataTs = Date.now();
+        if (this._probe && this._probe.active) {
+            this._probe.events += 1;
+            this._probe.bytes += size;
+        }
+    }
+
+    /**
+     * Bind mute/ended listeners on the current mic track (interruption detection).
+     */
+    _bindTrack(track) {
+        this._unbindTrack();
+        if (!track || typeof track.addEventListener !== 'function') {
+            return;
+        }
+        const onMute = () => this._onMicInterrupted('mute');
+        const onEnded = () => {
+            if (!this._stopRequested) this._onMicInterrupted('ended');
+        };
+        track.addEventListener('mute', onMute);
+        track.addEventListener('ended', onEnded);
+        this._trackBound = track;
+        this._trackHandlers = { onMute, onEnded };
+    }
+
+    _unbindTrack() {
+        if (this._trackBound && this._trackHandlers) {
+            try {
+                this._trackBound.removeEventListener('mute', this._trackHandlers.onMute);
+                this._trackBound.removeEventListener('ended', this._trackHandlers.onEnded);
+            } catch (e) { /* ignore */ }
+        }
+        this._trackBound = null;
+        this._trackHandlers = null;
+    }
+
+    /**
+     * The mic was taken (phone call or similar) — or audio stopped flowing (watchdog).
+     * Auto-pause, exactly like the user pressing the pause button; resume stays manual.
+     */
+    _onMicInterrupted(source) {
+        if (!this.pauseOnInterruption || this.transcribeOnly) return;
+        if (this._stopRequested) return;
+        if (this.state === 'recording') {
+            console.warn('[VoiceDiaryRecorder] Mic interrupted (' + source + ') — auto-pausing');
+            this.pauseRecording();
+            this._resumeNeedsFreshMic = true;   // the old mic will not come back to this recorder
+            if (this.onInterruptionPause) this.onInterruptionPause();
+        } else if (this.state === 'paused') {
+            this._resumeNeedsFreshMic = true;   // mic lost while the user had paused manually
+        }
+    }
+
+    /**
+     * Resume after a mic interruption. The old recorder cannot be trusted on iOS after a call
+     * (silent zombie — see docs/INTERRUPTION-HANDLING.md), so: save the paused segment
+     * (background), continue on a FRESH mic + new recorder, and only switch over after real
+     * audio bytes are seen flowing.
+     */
+    async _resumeWithFreshMic() {
+        if (this._resumeInFlight) return;
+        this._resumeInFlight = true;
+        this._pausedSegmentSaved = false;
+        try {
+            // 1) Wait for a healthy mic — the call may still be holding it.
+            let fresh = null;
+            for (let attempt = 0; attempt < this.interruptionMaxResumeAttempts && !fresh; attempt++) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia(this._micConstraints());
+                    const track = (typeof stream.getAudioTracks === 'function') ? stream.getAudioTracks()[0] : null;
+                    if (track && !track.muted) {
+                        fresh = stream;
+                    } else {
+                        stream.getTracks().forEach((t) => { try { t.stop(); } catch (e) { /* ignore */ } });
+                    }
+                } catch (error) {
+                    console.warn('[VoiceDiaryRecorder] Resume mic request failed:', error);
+                }
+                if (!fresh) await this._sleep(this.interruptionResumeRetryMs);
+            }
+            if (this._stopRequested) return;
+            if (!fresh) {
+                if (this.onInterruptionContinueBlocked) this.onInterruptionContinueBlocked();
+                return;   // stay paused — nothing was torn down; try again later
+            }
+
+            // 2) Persist the paused segment before swapping recorders.
+            const durationSeconds = this._captureSegmentDurationSeconds();
+            await this._enqueueSegmentOp(async () => {
+                let blob = null;
+                try {
+                    blob = await this._stopRecorderKeepStream();
+                } catch (error) { /* ignore */ }
+                if (blob && blob.size) {
+                    const persist = this.upload([], { background: true, blob, durationSeconds });
+                    persist.catch((error) => {
+                        console.error('[VoiceDiaryRecorder] Could not save segment before resume:', error);
+                    });
+                }
+            });
+            this._pausedSegmentSaved = true;
+            if (this._stopRequested) return;
+
+            // 3) Continue on the fresh mic; verify real audio is flowing before switching.
+            this.stopStream();
+            this.stream = fresh;
+            const probePromise = this._probeRecorder(this.resumeProbeMs);
+            this._beginRecorderOnStream();
+            const result = await probePromise;
+            if (this._stopRequested) return;   // user stopped while we were verifying
+            if (result && result.ok) {
+                this._resumeNeedsFreshMic = false;
+                this.setState('recording');
+                console.warn('[VoiceDiaryRecorder] Continued on fresh mic (' + result.bytes + 'B in ' + result.ms + 'ms)');
+                return;
+            }
+
+            // Probe failed — drop this attempt; the user can press Play again.
+            try { await this._stopRecorderKeepStream(); } catch (error) { /* ignore */ }
+            this.stopStream();
+            this.audioChunks = [];
+            this.audioBlob = null;
+            if (this.onInterruptionContinueBlocked) this.onInterruptionContinueBlocked();
+        } finally {
+            this._resumeInFlight = false;
+        }
+    }
+
+    /**
+     * Watch a just-started recorder for proof of real audio before trusting it.
+     */
+    _probeRecorder(timeoutMs) {
+        return new Promise((resolve) => {
+            const startedAt = Date.now();
+            const earlyFailMs = Math.min(4500, Math.max(400, Math.round(timeoutMs * 0.75)));
+            this._probe = { events: 0, bytes: 0, active: true, startedAt, checkTimer: null, resolve };
+            const check = () => {
+                const probe = this._probe;
+                if (!probe || !probe.active) return;
+                const elapsed = Date.now() - startedAt;
+                let done = false;
+                let ok = false;
+                if ((probe.events >= 2 && probe.bytes >= 8000) || (probe.events >= 1 && probe.bytes >= 30000)) {
+                    done = true;
+                    ok = true;
+                } else if (elapsed >= earlyFailMs && probe.events === 0) {
+                    done = true;
+                    ok = false;
+                } else if (elapsed >= timeoutMs) {
+                    done = true;
+                    ok = (probe.events >= 1 && probe.bytes >= 1000);
+                }
+                if (done) {
+                    probe.active = false;
+                    const result = { ok, events: probe.events, bytes: probe.bytes, ms: elapsed };
+                    if (this._probe === probe) this._probe = null;
+                    resolve(result);
+                } else {
+                    probe.checkTimer = setTimeout(check, 120);
+                }
+            };
+            check();
+        });
+    }
+
+    _sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    /**
      * Stop the current MediaRecorder and resolve with its audio blob.
      * Leaves the microphone stream running so a new segment can start immediately.
      */
@@ -218,6 +418,10 @@ class VoiceDiaryRecorder {
                 resolve(blob);
             };
             try {
+                // Stopping from the "paused" state can drop the buffered tail in some browsers.
+                if (this.mediaRecorder.state === 'paused') {
+                    this.mediaRecorder.resume();
+                }
                 this.mediaRecorder.stop();
             } catch (error) {
                 reject(error);
@@ -237,6 +441,10 @@ class VoiceDiaryRecorder {
             this._stopRequested = false;
             this.currentItemId = null;
             this.currentTempId = null;
+            this._resumeNeedsFreshMic = false;
+            this._resumeInFlight = false;
+            this._pausedSegmentSaved = false;
+            this._probe = null;
             this.recordingGroupId = this.transcribeOnly ? null : this._newRecordingGroupId();
 
             this.stream = await navigator.mediaDevices.getUserMedia(this._micConstraints());
@@ -278,6 +486,12 @@ class VoiceDiaryRecorder {
         if (this.state !== 'paused') {
             throw new Error(`Cannot resume in state: ${this.state}`);
         }
+
+        // After a mic interruption the old recorder cannot be trusted (iOS never hands the
+        // same mic back) — continue on a fresh mic instead of a silent zombie resume.
+        if (this._resumeNeedsFreshMic) {
+            return this._resumeWithFreshMic();
+        }
         
         if (this.pauseStartTime) {
             this.pauseDuration += Date.now() - this.pauseStartTime;
@@ -305,6 +519,18 @@ class VoiceDiaryRecorder {
                     return;
                 }
                 throw new Error(`Cannot stop in state: ${this.state}`);
+            }
+
+            if (this.state === 'paused' && this._resumeNeedsFreshMic
+                && (!this.mediaRecorder || this.mediaRecorder.state === 'inactive')
+                && (!this.audioChunks || this.audioChunks.length === 0)
+                && (this._pausedSegmentSaved || !this.audioBlob || this.audioBlob.size === 0)) {
+                // Waiting for the mic to come back; everything captured was already saved.
+                this._resumeNeedsFreshMic = false;
+                this._pausedSegmentSaved = false;
+                this.stopStream();
+                this.setState('idle');
+                return;
             }
 
             if (this.pauseStartTime) {
@@ -894,6 +1120,14 @@ class VoiceDiaryRecorder {
             if (this.onDurationUpdate) {
                 this.onDurationUpdate(duration);
             }
+
+            // Mic-interruption watchdog: if audio data stops flowing while recording, treat it
+            // as a mic interruption (auto-pause). Covers browsers without mute events.
+            if (this.pauseOnInterruption && this.interruptionWatchdogMs > 0 && !this._stopRequested
+                && this.state === 'recording' && this._sawData && this._lastDataTs
+                && (Date.now() - this._lastDataTs) > this.interruptionWatchdogMs) {
+                this._onMicInterrupted('watchdog');
+            }
             
             if (this.maxDuration > 0 && duration >= this.maxDuration) {
                 if (this.autoContinueOnMaxDuration && !this.transcribeOnly && this.state === 'recording') {
@@ -924,6 +1158,7 @@ class VoiceDiaryRecorder {
      * Stop media stream.
      */
     stopStream() {
+        this._unbindTrack();
         if (this.stream) {
             this.stream.getTracks().forEach(track => track.stop());
             this.stream = null;

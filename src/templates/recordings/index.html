@@ -238,7 +238,7 @@
 
 {% block extra_js %}
 <script
-  src="{% static 'recordings/js/audio_recorder.js' %}?v=20260901-duration-2"
+  src="{% static 'recordings/js/audio_recorder.js' %}?v=20260915-pause-resume-1"
   data-swipe-current="voice"
   data-swipe-voice-url="{% url 'recordings:record' %}"
   data-swipe-text-url="{% url 'text_input:page' %}"
@@ -751,6 +751,24 @@
       );
     }
     console.error('Rollover upload error:', error);
+  };
+
+  recorder.onInterruptionPause = function() {
+    if (window.VDTheme) {
+      window.VDTheme.showToast(
+        '{% trans "Interruption detected — recording paused. Tap play to continue when you are ready." %}',
+        'info'
+      );
+    }
+  };
+
+  recorder.onInterruptionContinueBlocked = function() {
+    if (window.VDTheme) {
+      window.VDTheme.showToast(
+        '{% trans "Microphone not available yet — try again in a moment." %}',
+        'info'
+      );
+    }
   };
 
   // Record button: start / pause / resume
