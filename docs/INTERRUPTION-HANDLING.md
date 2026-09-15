@@ -1,6 +1,6 @@
 # Interruption Handling — Voice Diary Recorder
 
-**Date:** 2026-09-15 · **Status:** **v2 (current)** = auto-pause + manual resume · **v1 (archived below)** = fully automatic "close clip + auto-continue".
+**Date:** 2026-09-15 · **Status:** **v3 (current)** = auto-pause + manual resume + **single-recording merge** · **v2** = auto-pause + manual resume (parts uploaded as two clips) · **v1 (archived below)** = fully automatic "close clip + auto-continue".
 
 ## Goal (v2 — Pedro's requirement, 2026-09-15)
 > "When an incoming call takes over the phone and the mic is interrupted, simply pause. …
@@ -921,3 +921,15 @@ describe('VoiceDiaryRecorder interruption handling', () => {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 ```
+
+## v3 — single-recording merge (current, 2026-09-15)
+**Why:** live test showed the resumed take landing as "a new recording" (two clips). Requirement: ONE single recording, like the manual pause.
+**How it works:**
+- On interruption resume, part 1 is *held* in memory (`_heldParts`) — NOT uploaded on its own.
+- Recording continues on a fresh mic + new recorder (iOS cannot revive the old recorder — "silent zombie").
+- At STOP, all parts are merged into one WAV (`_mergePartsToWav`: decode → concatenate PCM → 16-bit WAV) and uploaded as ONE file → one diary entry.
+- If the merge fails, the parts are uploaded separately (nothing is lost).
+- The on-screen timer (`getTakeDuration()`) stays continuous across the resume.
+- Rollover during a multi-part take holds segments instead of uploading mid-take.
+**Integration points:** constructor (`_heldParts`, `_heldDurationSeconds`); `_resumeWithFreshMic()` (hold, not upload); `stopRecording()` (collect → merge → single upload + fallback path); `rolloverRecording()` (multi-part hold); `getTakeDuration()` + duration interval; `upload()` extension picker (wav); cache-buster `?v=20260915-single-take-1`.
+**Tests:** 12 interruption + 15 rollover regression — all green.

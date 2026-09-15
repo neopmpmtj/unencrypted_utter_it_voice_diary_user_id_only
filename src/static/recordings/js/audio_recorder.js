@@ -70,10 +70,11 @@ class VoiceDiaryRecorder {
         // Shared by consecutive clips until the user starts a new Record session
         this.recordingGroupId = null;
 
-        // Interruption handling (v2): when the mic is grabbed (phone call or similar) the
-        // recording AUTO-PAUSES — the same pause as the manual pause button. The user resumes
-        // manually. On iOS the old mic is never handed back to the old recorder, so resuming
-        // after an interruption continues on a FRESH mic + new recorder (same recording group).
+        // Interruption handling: when the mic is grabbed (phone call or similar) the recording
+        // AUTO-PAUSES — the same pause as the manual pause button; the user resumes manually.
+        // On iOS the old mic is never handed back to the old recorder, so the resume continues
+        // on a FRESH mic + new recorder; all parts are merged at STOP into ONE single recording
+        // (see _mergePartsToWav) so the diary still gets one entry.
         this.pauseOnInterruption = options.pauseOnInterruption ?? !this.transcribeOnly;
         this.interruptionWatchdogMs = options.interruptionWatchdogMs ?? 15000;
         this.interruptionResumeRetryMs = options.interruptionResumeRetryMs ?? 1200;
@@ -81,7 +82,8 @@ class VoiceDiaryRecorder {
         this.resumeProbeMs = options.resumeProbeMs ?? 4000;
         this._resumeNeedsFreshMic = false;   // mic was lost; next resume needs a fresh handshake
         this._resumeInFlight = false;
-        this._pausedSegmentSaved = false;
+        this._heldParts = [];                // finished sub-recordings of an interrupted take (merged at stop)
+        this._heldDurationSeconds = 0;       // cumulative talk-time of held parts
         this._probe = null;
         this._lastDataTs = 0;
         this._sawData = false;
@@ -285,14 +287,13 @@ class VoiceDiaryRecorder {
 
     /**
      * Resume after a mic interruption. The old recorder cannot be trusted on iOS after a call
-     * (silent zombie — see docs/INTERRUPTION-HANDLING.md), so: save the paused segment
-     * (background), continue on a FRESH mic + new recorder, and only switch over after real
+     * (silent zombie — see docs/INTERRUPTION-HANDLING.md), so: hold the paused segment for the
+     * final merge, continue on a FRESH mic + new recorder, and only switch over after real
      * audio bytes are seen flowing.
      */
     async _resumeWithFreshMic() {
         if (this._resumeInFlight) return;
         this._resumeInFlight = true;
-        this._pausedSegmentSaved = false;
         try {
             // 1) Wait for a healthy mic — the call may still be holding it.
             let fresh = null;
@@ -316,7 +317,8 @@ class VoiceDiaryRecorder {
                 return;   // stay paused — nothing was torn down; try again later
             }
 
-            // 2) Persist the paused segment before swapping recorders.
+            // 2) Close the paused segment and HOLD it — it stays part of ONE single recording
+            //    that gets merged when the take ends (never uploaded on its own).
             const durationSeconds = this._captureSegmentDurationSeconds();
             await this._enqueueSegmentOp(async () => {
                 let blob = null;
@@ -324,13 +326,10 @@ class VoiceDiaryRecorder {
                     blob = await this._stopRecorderKeepStream();
                 } catch (error) { /* ignore */ }
                 if (blob && blob.size) {
-                    const persist = this.upload([], { background: true, blob, durationSeconds });
-                    persist.catch((error) => {
-                        console.error('[VoiceDiaryRecorder] Could not save segment before resume:', error);
-                    });
+                    this._heldParts.push({ blob, durationSeconds });
+                    this._heldDurationSeconds += durationSeconds;
                 }
             });
-            this._pausedSegmentSaved = true;
             if (this._stopRequested) return;
 
             // 3) Continue on the fresh mic; verify real audio is flowing before switching.
@@ -400,6 +399,63 @@ class VoiceDiaryRecorder {
     }
 
     /**
+     * Merge the parts of an interrupted take into ONE single WAV recording.
+     * The parts are the recorded pieces before/after mic handovers; merging them is what
+     * makes the take land as a single recording (one entry) on the server side.
+     */
+    async _mergePartsToWav(parts) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) throw new Error('AudioContext unavailable');
+        const totalSeconds = (parts || []).reduce((n, p) => n + (p.durationSeconds || 0), 0);
+        if (totalSeconds > 25 * 60) throw new Error('Take too long to merge in-browser');
+        const ac = new AC();
+        try {
+            const chunks = [];
+            let sampleRate = 0;
+            for (const part of parts) {
+                const arrayBuffer = await part.blob.arrayBuffer();
+                const audioBuffer = await new Promise((resolve, reject) => {
+                    ac.decodeAudioData(arrayBuffer, resolve, reject);
+                });
+                if (!sampleRate) sampleRate = audioBuffer.sampleRate;
+                const float = audioBuffer.getChannelData(0);
+                const int16 = new Int16Array(float.length);
+                for (let i = 0; i < float.length; i++) {
+                    const s = Math.max(-1, Math.min(1, float[i]));
+                    int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+                }
+                chunks.push(int16);
+            }
+            if (!chunks.length || !sampleRate) throw new Error('Nothing to merge');
+            let totalSamples = 0;
+            for (const c of chunks) totalSamples += c.length;
+            const header = new ArrayBuffer(44);
+            const view = new DataView(header);
+            const writeStr = (offset, str) => {
+                for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+            };
+            writeStr(0, 'RIFF');
+            view.setUint32(4, 36 + totalSamples * 2, true);
+            writeStr(8, 'WAVE');
+            writeStr(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            writeStr(36, 'data');
+            view.setUint32(40, totalSamples * 2, true);
+            const blobParts = [header];
+            for (const c of chunks) blobParts.push(c.buffer);
+            return new Blob(blobParts, { type: 'audio/wav' });
+        } finally {
+            try { ac.close(); } catch (e) { /* ignore */ }
+        }
+    }
+
+    /**
      * Stop the current MediaRecorder and resolve with its audio blob.
      * Leaves the microphone stream running so a new segment can start immediately.
      */
@@ -443,7 +499,6 @@ class VoiceDiaryRecorder {
             this.currentTempId = null;
             this._resumeNeedsFreshMic = false;
             this._resumeInFlight = false;
-            this._pausedSegmentSaved = false;
             this._probe = null;
             this.recordingGroupId = this.transcribeOnly ? null : this._newRecordingGroupId();
 
@@ -521,27 +576,66 @@ class VoiceDiaryRecorder {
                 throw new Error(`Cannot stop in state: ${this.state}`);
             }
 
-            if (this.state === 'paused' && this._resumeNeedsFreshMic
-                && (!this.mediaRecorder || this.mediaRecorder.state === 'inactive')
-                && (!this.audioChunks || this.audioChunks.length === 0)
-                && (this._pausedSegmentSaved || !this.audioBlob || this.audioBlob.size === 0)) {
-                // Waiting for the mic to come back; everything captured was already saved.
-                this._resumeNeedsFreshMic = false;
-                this._pausedSegmentSaved = false;
-                this.stopStream();
-                this.setState('idle');
-                return;
-            }
-
             if (this.pauseStartTime) {
                 this.pauseDuration += Date.now() - this.pauseStartTime;
                 this.pauseStartTime = null;
             }
 
-            const blob = await this._stopRecorderKeepStream();
-            this.audioBlob = blob;
+            // Collect every part of this take: held parts (after interruptions) + the current segment.
+            let currentBlob = null;
+            if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+                currentBlob = await this._stopRecorderKeepStream();
+            } else if (this.audioBlob) {
+                currentBlob = this.audioBlob;
+            }
+            const parts = this._heldParts.slice();
+            this._heldParts = [];
+            this._heldDurationSeconds = 0;
+            if (currentBlob && currentBlob.size) {
+                parts.push({ blob: currentBlob, durationSeconds });
+            }
+
+            if (parts.length === 0) {
+                this.stopStream();
+                this.setState('idle');
+                return;
+            }
+
+            if (parts.length === 1) {
+                // Single recording — upload as-is (no re-encode, original quality).
+                this.audioBlob = parts[0].blob;
+                this.stopStream();
+                await this.upload(files, { durationSeconds: parts[0].durationSeconds });
+                return;
+            }
+
+            // Multi-part take (interrupted + resumed): merge into ONE single recording.
+            const totalDuration = parts.reduce((n, p) => n + (p.durationSeconds || 0), 0);
+            this.setState('uploading');
+            let merged = null;
+            try {
+                merged = await this._mergePartsToWav(parts);
+            } catch (error) {
+                console.warn('[VoiceDiaryRecorder] Could not merge take parts — uploading them separately:', error);
+            }
+
+            if (merged) {
+                this.audioBlob = merged;
+                this.stopStream();
+                await this.upload(files, { durationSeconds: totalDuration });
+                return;
+            }
+
+            // Fallback: upload each part so nothing is lost.
             this.stopStream();
-            await this.upload(files, { durationSeconds });
+            for (let i = 0; i < parts.length - 1; i++) {
+                const persist = this.upload([], { background: true, blob: parts[i].blob, durationSeconds: parts[i].durationSeconds });
+                persist.catch((error) => {
+                    console.error('[VoiceDiaryRecorder] Part upload failed:', error);
+                });
+            }
+            this.audioBlob = parts[parts.length - 1].blob;
+            await this.upload(files, { durationSeconds: parts[parts.length - 1].durationSeconds });
         }).finally(() => {
             this.stopDurationTracking();
         });
@@ -581,12 +675,23 @@ class VoiceDiaryRecorder {
                 return;
             }
 
-            // Persist the finished clip before swapping recorders so a restart
-            // failure cannot drop audio that is already in memory.
-            const persist = this.upload([], { background: true, blob, durationSeconds });
-            persist.catch((error) => {
-                console.error('[VoiceDiaryRecorder] Rollover upload failed:', error);
-            });
+            const multiPart = this._heldParts.length > 0;
+            let persist = Promise.resolve();
+            if (multiPart) {
+                // Multi-part take (post-interruption): hold the finished segment for the
+                // final merge — no mid-take uploads, the take stays ONE recording.
+                if (blob && blob.size) {
+                    this._heldParts.push({ blob, durationSeconds });
+                    this._heldDurationSeconds += durationSeconds;
+                }
+            } else {
+                // Persist the finished clip before swapping recorders so a restart
+                // failure cannot drop audio that is already in memory.
+                persist = this.upload([], { background: true, blob, durationSeconds });
+                persist.catch((error) => {
+                    console.error('[VoiceDiaryRecorder] Rollover upload failed:', error);
+                });
+            }
 
             this.stopDurationTracking();
 
@@ -639,7 +744,7 @@ class VoiceDiaryRecorder {
                 return;
             }
 
-            if (this.onRollover) {
+            if (!multiPart && this.onRollover) {
                 this.onRollover();
             }
         });
@@ -684,7 +789,9 @@ class VoiceDiaryRecorder {
         try {
             const formData = new FormData();
             const mime = blob.type || this.mimeType || '';
-            const extension = mime.includes('webm') || this.mimeType.includes('webm') ? 'webm' : 'wav';
+            const extension = mime.includes('webm') ? 'webm'
+                : (mime.includes('wav') ? 'wav'
+                : (mime.includes('mp4') ? 'mp4' : (this.mimeType.includes('webm') ? 'webm' : 'wav')));
             formData.append('audio', blob, `recording.${extension}`);
             formData.append('template_type', this.templateType);
             if (this.transcribeOnly) {
@@ -1107,6 +1214,14 @@ class VoiceDiaryRecorder {
         
         return Math.max(0, elapsed / 1000);
     }
+
+    /**
+     * Elapsed talk-time of the whole take (held parts + current segment), so the timer
+     * stays continuous across an interruption resume.
+     */
+    getTakeDuration() {
+        return this._heldDurationSeconds + this.getDuration();
+    }
     
     /**
      * Start duration tracking interval.
@@ -1118,7 +1233,7 @@ class VoiceDiaryRecorder {
             const duration = this.getDuration();
             
             if (this.onDurationUpdate) {
-                this.onDurationUpdate(duration);
+                this.onDurationUpdate(this.getTakeDuration());
             }
 
             // Mic-interruption watchdog: if audio data stops flowing while recording, treat it

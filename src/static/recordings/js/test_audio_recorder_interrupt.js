@@ -1,5 +1,6 @@
 /**
- * Tests for VoiceDiaryRecorder interruption handling v2 (auto-pause + manual resume).
+ * Tests for VoiceDiaryRecorder interruption handling v3
+ * (auto-pause + manual resume + single-recording merge).
  *
  * Run with: node --test src/static/recordings/js/test_audio_recorder_interrupt.js
  */
@@ -137,7 +138,7 @@ function currentTrack(recorder) {
     return recorder.stream.getAudioTracks()[0];
 }
 
-describe('VoiceDiaryRecorder interruption handling (auto-pause + manual resume)', () => {
+describe('VoiceDiaryRecorder interruption handling (auto-pause + resume + single-recording merge)', () => {
     let recorder;
 
     beforeEach(() => {
@@ -167,12 +168,12 @@ describe('VoiceDiaryRecorder interruption handling (auto-pause + manual resume)'
         assert.equal(recorder.mediaRecorder.state, 'paused');
         assert.equal(fetchCalls.length, 0, 'nothing uploads until the user resumes or stops');
         assert.equal(gumCalls.length, 1, 'no extra mic request at pause time');
+        assert.equal(recorder._heldParts.length, 0);
     });
 
-    it('manual resume after an interruption continues on a fresh mic, keeping one group', async () => {
+    it('manual resume after an interruption holds part 1 and continues on a fresh mic', async () => {
         recorder = newRecorder();
         await recorder.startRecording();
-        const groupId = recorder.recordingGroupId;
         recorder.startTime = Date.now() - 8000;
         currentTrack(recorder).dispatch('mute');
         await waitFor(30);
@@ -185,15 +186,57 @@ describe('VoiceDiaryRecorder interruption handling (auto-pause + manual resume)'
         assert.ok(gumCalls.length >= 2, 'resume must request a fresh mic');
         assert.equal(recorderInstances.length, 2, 'a new recorder runs');
         assert.equal(recorder.mediaRecorder.state, 'recording');
+        assert.equal(recorder._heldParts.length, 1, 'part 1 is held for the final merge');
+        assert.equal(fetchCalls.length, 0, 'nothing is uploaded while the take continues');
+    });
 
-        assert.equal(fetchCalls.length, 1, 'paused segment saved in background');
-        const body = fetchCalls[0].opts.body;
-        assert.equal(body.get('recording_group_id'), groupId);
-        assert.ok(Number(body.get('recording_duration_seconds')) >= 5);
+    it('stop merges the held parts into ONE single upload', async () => {
+        recorder = newRecorder();
+        await recorder.startRecording();
+        recorder.startTime = Date.now() - 8000;
+        currentTrack(recorder).dispatch('mute');
+        await waitFor(30);
+
+        await recorder.resumeRecording();
+        await waitFor(200);
+
+        let mergedParts = null;
+        recorder._mergePartsToWav = async (parts) => {
+            mergedParts = parts;
+            return new Blob([new Uint8Array(2048)], { type: 'audio/wav' });
+        };
 
         await recorder.stopRecording();
-        assert.equal(fetchCalls.length, 2);
-        assert.equal(fetchCalls[1].opts.body.get('recording_group_id'), groupId);
+        await waitFor(40);
+
+        assert.ok(mergedParts, 'merge must be used for a multi-part take');
+        assert.equal(mergedParts.length, 2, 'both parts go into the merge');
+        assert.equal(fetchCalls.length, 1, 'exactly ONE upload — the merged recording');
+        const body = fetchCalls[0].opts.body;
+        assert.equal(body.get('recording_group_id'), recorder.recordingGroupId);
+        assert.ok(Number(body.get('recording_duration_seconds')) >= 5, 'cumulative duration sent');
+        assert.equal(recorder.state, 'processing');
+    });
+
+    it('fallback: if the merge fails, the parts are uploaded separately (nothing lost)', async () => {
+        recorder = newRecorder();
+        await recorder.startRecording();
+        recorder.startTime = Date.now() - 8000;
+        currentTrack(recorder).dispatch('mute');
+        await waitFor(30);
+
+        await recorder.resumeRecording();
+        await waitFor(200);
+
+        // No _mergePartsToWav stub: Node has no AudioContext → the merge throws → fallback path.
+        await recorder.stopRecording();
+        await waitFor(60);
+
+        assert.equal(fetchCalls.length, 2, 'both parts uploaded separately');
+        assert.ok(fetchCalls[0].opts.body.get('audio'), 'part 1 uploaded');
+        assert.ok(fetchCalls[1].opts.body.get('audio'), 'part 2 uploaded');
+        assert.equal(fetchCalls[1].opts.body.get('recording_group_id'), recorder.recordingGroupId);
+        assert.equal(recorder.state, 'processing');
     });
 
     it('stays paused while the call still holds the mic; stop then saves the captured part', async () => {
@@ -262,9 +305,10 @@ describe('VoiceDiaryRecorder interruption handling (auto-pause + manual resume)'
         await waitFor(200);
         assert.equal(recorder.state, 'recording');
         assert.ok(gumCalls.length >= 2, 'fresh mic used after the mic was lost');
+        assert.equal(recorder._heldParts.length, 1, 'paused segment held for the final merge');
     });
 
-    it('probe failure drops the attempt; stop then finishes quietly', async () => {
+    it('probe failure drops the attempt; the held part is still uploaded on stop', async () => {
         recorder = newRecorder();
         let blocked = 0;
         recorder.onInterruptionContinueBlocked = () => { blocked += 1; };
@@ -279,12 +323,34 @@ describe('VoiceDiaryRecorder interruption handling (auto-pause + manual resume)'
 
         assert.equal(blocked, 1);
         assert.equal(recorder.state, 'paused');
-        assert.equal(fetchCalls.length, 1, 'paused segment was already saved');
+        assert.equal(fetchCalls.length, 0, 'nothing uploaded yet');
+        assert.equal(recorder._heldParts.length, 1, 'part 1 held; failed part 2 dropped');
 
         await recorder.stopRecording();
         await waitFor(40);
-        assert.equal(recorder.state, 'idle');
+        assert.equal(recorder.state, 'processing');
         assert.equal(fetchCalls.length, 1);
+        assert.ok(fetchCalls[0].opts.body.get('audio'));
+    });
+
+    it('rollover during a multi-part take holds the segment instead of uploading', async () => {
+        recorder = newRecorder();
+        await recorder.startRecording();
+        currentTrack(recorder).dispatch('mute');
+        await waitFor(30);
+
+        await recorder.resumeRecording();
+        await waitFor(200);
+        assert.equal(recorder._heldParts.length, 1);
+        assert.equal(fetchCalls.length, 0);
+
+        recorder.startTime = Date.now() - (recorder.maxDuration * 1000);
+        await recorder.rolloverRecording();
+        await waitFor(40);
+
+        assert.equal(recorder._heldParts.length, 2, 'rollover segment held, not uploaded');
+        assert.equal(fetchCalls.length, 0, 'no mid-take uploads');
+        assert.equal(recorder.state, 'recording');
     });
 
     it('watchdog auto-pauses when audio data stops flowing', async () => {
